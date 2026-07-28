@@ -25,10 +25,10 @@ Object.defineProperty(globalThis, 'localStorage', {
     setItem: (k: string, v: string) => { store.set(k, v); },
   },
 });
-saveAgentSettings({ skillGuard: false, thinkingEnabled: true, mgTier: 'quality', planMode: true });
+saveAgentSettings({ skillGuard: false, thinkingEnabled: true, reasoningEffort: 'high', mgTier: 'quality', planMode: true });
 assert.deepStrictEqual(
   loadAgentSettings(),
-  { skillGuard: false, thinkingEnabled: true, mgTier: 'quality', planMode: true },
+  { skillGuard: false, thinkingEnabled: true, reasoningEffort: 'high', mgTier: 'quality', planMode: true },
   'save→load roundtrip 保真',
 );
 // 非法 tier / 缺字段回落默认

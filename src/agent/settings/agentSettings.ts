@@ -4,6 +4,8 @@
 /** MG 生成质量三档。 */
 export type MgTier = 'speed' | 'balance' | 'quality';
 export const MG_TIERS: readonly MgTier[] = ['speed', 'balance', 'quality'];
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export interface AgentSettings {
   /**
@@ -13,6 +15,7 @@ export interface AgentSettings {
   skillGuard: boolean;
   /** 思考模式(开 → 请求带 thinking:'adaptive' + effort:'medium')。 */
   thinkingEnabled: boolean;
+  reasoningEffort?: ReasoningEffort;
   /** MG 质量档(默认 balance),经 <agent_settings> 注入。 */
   mgTier: MgTier;
   /** 计划模式(Agent Settings planMode 开关):先出编号计划,用户确认后再动手。 */
@@ -24,6 +27,7 @@ const KEY = 'cc.agentSettings.v1';
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   skillGuard: true,
   thinkingEnabled: false,
+  reasoningEffort: 'high',
   mgTier: 'balance',
   planMode: false,
 };
@@ -36,6 +40,9 @@ export function loadAgentSettings(): AgentSettings {
     return {
       skillGuard: parsed.skillGuard !== false,
       thinkingEnabled: parsed.thinkingEnabled === true,
+      reasoningEffort: REASONING_EFFORTS.includes(parsed.reasoningEffort as ReasoningEffort)
+        ? parsed.reasoningEffort as ReasoningEffort
+        : DEFAULT_AGENT_SETTINGS.reasoningEffort,
       mgTier: MG_TIERS.includes(parsed.mgTier as MgTier) ? (parsed.mgTier as MgTier) : DEFAULT_AGENT_SETTINGS.mgTier,
       planMode: parsed.planMode === true,
     };

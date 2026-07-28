@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { buildSubmitImageArgs, buildSubmitMusicArgs, buildSubmitVideoArgs, buildSubmitVoiceArgs, shouldAddImageToTimeline } from './generate-tool-input';
 
-assert.equal(shouldAddImageToTimeline({}), true);
+assert.equal(shouldAddImageToTimeline({}), false);
 assert.equal(shouldAddImageToTimeline({ addToTimeline: false }), false);
+assert.equal(shouldAddImageToTimeline({ addToTimeline: true }), true);
 
 const defaultModel = buildSubmitImageArgs({
   prompt: 'a cat',

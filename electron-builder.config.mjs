@@ -63,12 +63,16 @@ export default {
     ...(hasMacSigningCertificate ? {} : { identity: '-' }),
   },
   win: {
-    target: ['nsis'],
+    target: ['nsis', 'portable'],
     icon: 'public/openchatcut-icon.png',
   },
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
+    artifactName: '${productName}-${version}-${arch}-setup.${ext}',
+  },
+  portable: {
+    artifactName: '${productName}-${version}-${arch}-portable.${ext}',
   },
   linux: {
     target: ['AppImage'],

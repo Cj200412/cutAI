@@ -57,6 +57,10 @@
 
 OpenChatCut is an **open-source ChatCut alternative**: a video editor that brings **conversational agents** and **professional timeline editing** into the same workspace. It is independent open source (AGPL), not affiliated with the commercial ChatCut product.
 
+### This repository and upstream attribution
+
+This repository is a personal derivative development repository maintained by `Cj200412`. It is based on [OpenChatCut](https://github.com/0xsline/OpenChatCut). Upstream project name, authorship, license, and copyright notices are retained. Changes in this repository currently focus on local workspace projects, Claude/Codex CLI agents, streaming agent events, safe project editing, generated-media asset handling, and Windows packaging. Please consult the upstream repository for the original project history and the upstream license before redistributing.
+
 **OpenChatCut = local video projects + multitrack timeline + AI agents + MCP + production-ready exports.**
 
 It does not merely generate a video that can no longer be changed. Every edit is written to real tracks, clips, transitions, captions, effects, and media inside the project. You can continue editing manually, undo or redo changes, save versions, or hand the project to another agent.

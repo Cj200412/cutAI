@@ -12,7 +12,7 @@ export const GENERATE_TOOL_SCHEMAS: AgentToolSchema[] = [
         model: { type: 'string', enum: ['gpt-image-2', 'nano-banana', 'image-01'], description: 'gpt-image-2 is the default; nano-banana is best for reference-heavy work; image-01 is MiniMax (at most 9 outputs; one subject reference when R2 is configured).' },
         prompt: { type: 'string', description: 'Detailed description of the image to generate.' },
         name: { type: 'string', description: 'Short descriptive asset name shown in the media pool.' },
-        addToTimeline: { type: 'boolean', description: 'Defaults to true. Set false when the user asks to keep the result in the media pool/library only or says not to modify the timeline.' },
+        addToTimeline: { type: 'boolean', description: 'Defaults to false: save the generated image to the media pool first for preview. Set true only when the user explicitly wants it placed on the active timeline.' },
         aspectRatio: { type: 'string', enum: ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '21:9'], description: 'Defaults to 16:9. Do not send width/height with aspectRatio.' },
         imageSize: { type: 'string', enum: ['512px', '1K', '2K', '4K'], description: 'Defaults to 1K. 512px is Gemini-only; use 2K/4K only when explicitly requested. Ignored when custom width/height are set.' },
         width: { type: 'integer', minimum: 512, maximum: 3840, description: 'Send only when the user explicitly requests custom pixel dimensions. Requires height and omission of aspectRatio. MiniMax max 2048.' },

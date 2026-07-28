@@ -14,6 +14,7 @@ import { proxyMiddleware } from '../server/proxy.ts';
 import { parseEnvText } from './env-file.ts';
 import { createMiniConnect } from './mini-connect.ts';
 import { distStaticMiddleware, uploadsMiddleware } from './static-files.ts';
+import { serveWorkspaceMedia } from './workspace-project.ts';
 
 export interface EmbeddedServer {
   server: Server;
@@ -31,8 +32,12 @@ function assemblyHeaders(): Record<string, string> {
   return k ? { authorization: k } : {};
 }
 
-export async function startEmbeddedServer(distDir: string): Promise<EmbeddedServer> {
+export async function startEmbeddedServer(
+  distDir: string,
+  runtimeConfig: Record<string, string> = {},
+): Promise<EmbeddedServer> {
   await seedFromEnvLocal();
+  seedKeystore(runtimeConfig);
 
   const app = createMiniConnect((err) => {
     console.error('[embedded-server]', err instanceof Error ? err.message : err);
@@ -65,6 +70,9 @@ export async function startEmbeddedServer(distDir: string): Promise<EmbeddedServ
 
   // 静态兜底在最后:运行时上传素材优先于 dist 的 build 期拷贝
   app.use('/media/uploads', uploadsMiddleware());
+  app.use((req, res, next) => {
+    void serveWorkspaceMedia(req, res).then((handled) => { if (!handled) next(); }).catch(next);
+  });
   app.use(distStaticMiddleware(distDir));
 
   // 端口策略:优先 5199(README 里外部 MCP 客户端的文档地址);被占(网页 dev

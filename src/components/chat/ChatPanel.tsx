@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
-import type { AgentContext } from '../../agent/context';
+import { resolveAgentReferences, type AgentContext, type AgentReference } from '../../agent/context';
 import type { MediaAsset, TimelineState } from '../../editor/types';
 import { kindOf } from '../../media/upload';
 import { useAgent } from '../../agent/useAgent';
+import type { DisplayMessage } from '../../agent/useAgent';
 import { useExternalAgentBridge } from '../../agent/useExternalAgentBridge';
 import { ExternalProposalCard } from './ExternalProposalCard';
 import { thinkingPhrase } from './thinkingPhrases';
@@ -15,7 +16,7 @@ import { ChatMessage } from './ChatMessage';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupMessages } from './message-groups';
 import { ChatComposer, type ChatMode, type RefItem } from './ChatComposer';
-import { BrandMark, Icon, OpenChatCutWordmark } from '../icons';
+import { BrandMark, CutaiWordmark, Icon } from '../icons';
 import {
   clearComposerDraft,
   loadChatAutoApply,
@@ -44,10 +45,40 @@ const QUICK_ACTIONS = [
   { label: '横转竖', prompt: '将当前工程转换为 9:16 竖屏，并调整主要画面构图' },
 ];
 
+const CHAT_DOCUMENT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'csv', 'json', 'srt', 'vtt', 'log']);
+const MAX_CHAT_DOCUMENT_BYTES = 2 * 1024 * 1024;
+const MAX_CHAT_DOCUMENT_CHARS = 200_000;
+
+function isChatDocument(file: File): boolean {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  return CHAT_DOCUMENT_EXTENSIONS.has(extension)
+    || file.type.startsWith('text/')
+    || file.type === 'application/json';
+}
+
+async function readChatDocument(file: File): Promise<string> {
+  if (file.size > MAX_CHAT_DOCUMENT_BYTES) {
+    throw new Error(`文档“${file.name}”超过 2 MB，请拆分后再附加`);
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    text = new TextDecoder('gb18030').decode(bytes);
+  }
+  text = text.replace(/^\uFEFF/, '');
+  if (text.length > MAX_CHAT_DOCUMENT_CHARS) {
+    throw new Error(`文档“${file.name}”内容超过 20 万字，请拆分后再附加`);
+  }
+  return text;
+}
+
 interface ChatPanelProps {
   ctx: AgentContext;
   /** the current project's id — chat history is persisted per project */
   projectId: string;
+  projectRoot?: string;
   collapsed: boolean;
   onToggleCollapse: () => void;
   /** show a proposal's draft result in the player (null = show committed state) */
@@ -85,13 +116,196 @@ const GUARD_SKILL_LABELS = {
   'video-gen': '视频生成',
 } as const;
 
-export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPreviewState, seed, creativeMode, onCreativeModeChange, onImportMedia }: ChatPanelProps) {
+export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleCollapse, onPreviewState, seed, creativeMode, onCreativeModeChange, onImportMedia }: ChatPanelProps) {
   const t = useT();
   const {
-    messages, running, send, stop, enhance, proposal, applyProposal, rejectProposal, clearHistory,
+    messages: apiMessages, running: apiRunning, send: sendApi, stop: stopApi, enhance, proposal, applyProposal, rejectProposal, clearHistory: clearApiHistory,
     proposalStale, forceApplyProposal, reProposeStale, pendingGuard, liveTool,
     changeLog, rollbackChangeSession, canRollbackChangeSession,
   } = useAgent(ctx, projectId);
+  const sourceKey = `cutai:agent-source:${projectId}`;
+  const cliChatKey = (profileId: string) => `cutai:cli-chat:${projectId}:${profileId}`;
+  const [agentSource, setAgentSource] = useState(() => localStorage.getItem(sourceKey) || 'api');
+  const [cliProfiles, setCliProfiles] = useState<CliAgentProfileResult[]>([]);
+  const [cliMessages, setCliMessages] = useState<DisplayMessage[]>([]);
+  const [cliRunning, setCliRunning] = useState(false);
+  const [cliRunId, setCliRunId] = useState<string | null>(null);
+  const cliRunIdRef = useRef<string | null>(null);
+  const [cliSessionId, setCliSessionId] = useState<string | undefined>();
+  useEffect(() => window.cutaiDesktop?.onCliAgentEvent((event) => {
+    if (event.runId !== cliRunIdRef.current) return;
+    setCliMessages((current) => {
+      const next = [...current];
+      const assistantIndex = next.findLastIndex((message) => message.role === 'assistant');
+      const updateAssistant = (patch: (message: DisplayMessage) => DisplayMessage): void => {
+        if (assistantIndex >= 0) next[assistantIndex] = patch(next[assistantIndex]);
+      };
+      if (event.type === 'status') {
+        updateAssistant((message) => ({
+          ...message,
+          thinking: !message.thinking || message.thinking.includes('等待结构化事件')
+            ? event.message
+            : message.thinking.includes(event.message) ? message.thinking : `${message.thinking}\n${event.message}`,
+        }));
+      } else if (event.type === 'thinking') {
+        updateAssistant((message) => ({
+          ...message,
+          thinking: `${message.thinking && !message.thinking.includes('等待结构化事件') ? `${message.thinking}\n` : ''}${event.delta}`,
+        }));
+      } else if (event.type === 'text') {
+        updateAssistant((message) => ({ ...message, text: `${message.text}${event.delta}` }));
+      } else if (event.type === 'tool-start') {
+        next.push({
+          role: 'tool',
+          text: '',
+          tool: { name: event.name, args: event.args ?? {}, result: { status: 'running', toolId: event.toolId } },
+        });
+      } else if (event.type === 'tool-result') {
+        const toolIndex = next.findLastIndex((message) => message.role === 'tool'
+          && message.tool?.result && typeof message.tool.result === 'object'
+          && (message.tool.result as { toolId?: string }).toolId === event.toolId);
+        if (toolIndex >= 0 && next[toolIndex].tool) {
+          next[toolIndex] = {
+            ...next[toolIndex],
+            tool: { ...next[toolIndex].tool!, result: event.result ?? { status: 'completed' } },
+          };
+        } else {
+          next.push({ role: 'tool', text: '', tool: { name: event.name, args: {}, result: event.result ?? { status: 'completed' } } });
+        }
+      }
+      return next;
+    });
+  }), []);
+  useEffect(() => {
+    void window.cutaiDesktop?.listCliAgents().then(setCliProfiles).catch(() => setCliProfiles([]));
+  }, []);
+  useEffect(() => {
+    localStorage.setItem(sourceKey, agentSource);
+    if (agentSource === 'api') { setCliMessages([]); setCliSessionId(undefined); return; }
+    try {
+      const parsed = JSON.parse(localStorage.getItem(cliChatKey(agentSource)) || '{}') as {
+        messages?: DisplayMessage[];
+        sessionId?: string;
+      };
+      setCliMessages(Array.isArray(parsed.messages) ? parsed.messages : []);
+      setCliSessionId(typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined);
+    } catch {
+      setCliMessages([]);
+      setCliSessionId(undefined);
+    }
+  }, [agentSource, sourceKey]);
+  useEffect(() => {
+    if (agentSource === 'api') return;
+    localStorage.setItem(cliChatKey(agentSource), JSON.stringify({ messages: cliMessages, sessionId: cliSessionId }));
+  }, [agentSource, cliMessages, cliSessionId]);
+  const sendCli = async (text: string, references: AgentReference[] = []): Promise<void> => {
+    const desktop = window.cutaiDesktop;
+    const profile = cliProfiles.find((item) => item.id === agentSource);
+    if (!desktop || !profile) {
+      setCliMessages((current) => [...current, { role: 'error', text: t('CLI Agent 不可用') }]);
+      return;
+    }
+    if (!projectRoot) {
+      setCliMessages((current) => [...current, { role: 'user', text }, {
+        role: 'error',
+        text: t('CLI Agent 只在本地文件夹工程中启用。请先把当前工程迁移到本地文件夹。'),
+      }]);
+      return;
+    }
+    let liveProfile = profile;
+    if (!profile.authorizedRoots.includes(projectRoot)) {
+      const approved = window.confirm([
+        t('首次启用本地 CLI Agent，需要授权只读访问当前工程。'),
+        '',
+        `${t('Agent')}：${profile.name} ${profile.version}`,
+        `${t('可执行文件')}：${profile.executable}`,
+        `${t('配置目录')}：${profile.configDirectory || '-'}`,
+        `${t('工程目录')}：${projectRoot}`,
+        t('权限：读取工程文件；禁止直接写源素材和 .cutai；时间线编辑必须通过 CutAI 提案确认。'),
+      ].join('\n'));
+      if (!approved) return;
+      await desktop.authorizeCliAgent(profile.id, projectRoot, profile.fingerprint);
+      const refreshed = await desktop.listCliAgents();
+      setCliProfiles(refreshed);
+      liveProfile = refreshed.find((item) => item.id === profile.id) ?? profile;
+    }
+    const runId = crypto.randomUUID();
+    cliRunIdRef.current = runId;
+    setCliRunId(runId);
+    setCliRunning(true);
+    setCliMessages((current) => [...current, { role: 'user', text }, {
+      role: 'assistant',
+      text: '',
+      thinking: 'CLI 已启动，正在等待结构化事件…',
+    }]);
+    try {
+      const contextEntries = resolveAgentReferences(ctx, references);
+      const prompt = contextEntries.length
+        ? `${text}\n\n<chat_context_entries>\n${JSON.stringify(contextEntries)}\n</chat_context_entries>`
+        : text;
+      const model = localStorage.getItem(`cutai:cli-model:${projectId}:${liveProfile.id}`) || liveProfile.defaultModel;
+      const selectedModel = liveProfile.models.find((item) => item.id === model);
+      const reasoningEffort = localStorage.getItem(`cutai:cli-effort:${projectId}:${liveProfile.id}`)
+        || selectedModel?.defaultReasoningEffort;
+      const fileAccess = localStorage.getItem(`cutai:cli-file-access:${projectId}:${liveProfile.id}`) === 'workspace-write'
+        ? 'workspace-write' as const
+        : 'proposal-only' as const;
+      const result = await desktop.runCliAgent({
+        runId,
+        profileId: liveProfile.id,
+        projectId,
+        projectRoot,
+        prompt,
+        sessionId: cliSessionId,
+        ...(model ? { model } : {}),
+        ...(reasoningEffort ? { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
+        fileAccess,
+      });
+      setCliSessionId(result.sessionId);
+      setCliMessages((current) => {
+        const next = [...current];
+        const assistantIndex = next.findLastIndex((message) => message.role === 'assistant');
+        if (assistantIndex < 0) {
+          next.push({ role: 'assistant', text: result.text || t('CLI 已完成，但没有返回文本。'), ...(result.reasoning ? { thinking: result.reasoning } : {}) });
+        } else {
+          const assistant = next[assistantIndex];
+          next[assistantIndex] = {
+            ...assistant,
+            text: assistant.text || result.text || t('CLI 已完成，但没有返回文本。'),
+            thinking: assistant.thinking?.includes('等待结构化事件') ? result.reasoning : assistant.thinking || result.reasoning,
+          };
+        }
+        return next;
+      });
+    } catch (error) {
+      setCliMessages((current) => [...current, {
+        role: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      }]);
+    } finally {
+      cliRunIdRef.current = null;
+      setCliRunId(null);
+      setCliRunning(false);
+    }
+  };
+  const messages = agentSource === 'api' ? apiMessages : cliMessages;
+  const running = agentSource === 'api' ? apiRunning : cliRunning;
+  const send = (text: string, options?: { askOnly?: boolean; references?: AgentReference[] }): void => {
+    if (agentSource === 'api') sendApi(text, options);
+    else void sendCli(text, options?.references);
+  };
+  const stop = (): void => {
+    if (agentSource === 'api') stopApi();
+    else if (cliRunId) void window.cutaiDesktop?.cancelCliAgent(cliRunId);
+  };
+  const clearHistory = (): void => {
+    if (agentSource === 'api') clearApiHistory();
+    else {
+      setCliMessages([]);
+      setCliSessionId(undefined);
+      localStorage.removeItem(cliChatKey(agentSource));
+    }
+  };
   const externalProposal = useExternalAgentBridge(ctx, projectId);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<ChatMode>('agent');
@@ -129,8 +343,19 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
 
   // @-referenceable things: media-pool assets + template library
   const references: RefItem[] = [
-    ...ctx.getDoc().assets.map((a) => ({ id: a.id, name: a.name, kind: a.kind })),
-    ...ctx.templates.slice(0, 40).map((tpl) => ({ id: tpl.id, name: tpl.name, kind: 'template' as const })),
+    ...ctx.getDoc().assets.map((a) => ({
+      id: a.id, name: a.name, kind: a.kind, preview: a.src, width: a.width, height: a.height,
+    })),
+    ...ctx.templates.slice(0, 40).map((tpl) => ({
+      id: tpl.id,
+      name: tpl.name,
+      kind: 'template' as const,
+      preview: tpl.thumb || undefined,
+      description: tpl.description,
+      category: tpl.category,
+      width: tpl.width,
+      height: tpl.height,
+    })),
   ];
 
   useEffect(() => {
@@ -205,13 +430,26 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
   // media pool (same pipeline as 我的素材 upload — probe + upload + auto-ASR) and
   // attach it as an @ reference so the agent can place it (chat_context_entry).
   const importPastedFiles = async (files: File[]) => {
-    const supported = files.filter((f) => kindOf(f) !== null);
-    setPasteError(supported.length < files.length ? t('已忽略不支持的文件（仅支持 视频 / 图片 / 音频 / GIF / SVG）') : null);
+    const supported = files.filter((file) => kindOf(file) !== null || isChatDocument(file));
+    setPasteError(supported.length < files.length
+      ? t('已忽略暂不支持的文件；当前支持媒体和 TXT / Markdown / CSV / JSON / 字幕文本')
+      : null);
     for (const file of supported) {
       setPasting((n) => n + 1);
       try {
-        const asset = await onImportMedia(file);
-        insertRef({ id: asset.id, name: asset.name, kind: asset.kind });
+        if (isChatDocument(file)) {
+          const text = await readChatDocument(file);
+          insertRef({
+            id: `document:${crypto.randomUUID()}`,
+            name: file.name,
+            kind: 'document',
+            mimeType: file.type || 'text/plain',
+            text,
+          });
+        } else {
+          const asset = await onImportMedia(file);
+          insertRef({ id: asset.id, name: asset.name, kind: asset.kind });
+        }
       } catch (reason) {
         setPasteError(reason instanceof Error ? reason.message : t('导入失败'));
       } finally {
@@ -235,7 +473,7 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
         <div className="cc-chat-brand">
           <BrandMark size={20} />
           <span className="cc-chat-brand-copy">
-            <OpenChatCutWordmark width={102} />
+            <CutaiWordmark width={102} />
             <small>{t('Agent 工作台')}</small>
           </span>
         </div>
@@ -399,6 +637,11 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
           onPasteFiles={importPastedFiles} pasting={pasting > 0}
           pasteError={pasteError} onDismissPasteError={() => setPasteError(null)}
           taRef={taRef}
+          agentSource={agentSource}
+          cliProfiles={cliProfiles}
+          projectRoot={projectRoot}
+          projectId={projectId}
+          onAgentSourceChange={setAgentSource}
           placeholder={messages.length === 0 ? t('描述你想要创建的内容...') : t('告诉 AI 要做哪些修改 - @ 引用素材')} />
       </div>
     </aside>

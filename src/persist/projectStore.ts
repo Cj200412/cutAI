@@ -25,6 +25,9 @@ export interface ProjectMeta {
   id: string;
   name: string;
   updatedAt: number;
+  storageMode?: 'workspace' | 'internal' | 'legacy-package';
+  rootPath?: string;
+  projectFileVersion?: number;
   /** Soft-delete timestamp; absent means active. */
   deletedAt?: number;
   /** Optional free-text project description. */
@@ -347,13 +350,22 @@ export async function saveProject(
 export async function createProject(
   name: string,
   doc: ProjectDoc,
-  opts?: { description?: string },
+  opts?: {
+    description?: string;
+    id?: string;
+    storageMode?: ProjectMeta['storageMode'];
+    rootPath?: string;
+    projectFileVersion?: number;
+  },
 ): Promise<ProjectMeta> {
   const meta: ProjectMeta = {
-    id: newId(),
+    id: opts?.id || newId(),
     name,
     updatedAt: now(),
     ...(opts?.description ? { description: opts.description } : {}),
+    ...(opts?.storageMode ? { storageMode: opts.storageMode } : {}),
+    ...(opts?.rootPath ? { rootPath: opts.rootPath } : {}),
+    ...(opts?.projectFileVersion ? { projectFileVersion: opts.projectFileVersion } : {}),
   };
   await idbSet(projectKey(meta.id), doc);
   await idbSet(INDEX_KEY, [meta, ...(await readIndex())]);
@@ -367,7 +379,13 @@ export async function renameProject(id: string, name: string): Promise<void> {
 
 export async function updateProjectMeta(
   id: string,
-  patch: { name?: string; description?: string | null },
+  patch: {
+    name?: string;
+    description?: string | null;
+    storageMode?: ProjectMeta['storageMode'];
+    rootPath?: string;
+    projectFileVersion?: number;
+  },
 ): Promise<ProjectMeta | null> {
   const index = await readIndex();
   const entry = index.find((m) => m.id === id);
@@ -379,6 +397,9 @@ export async function updateProjectMeta(
   };
   if (patch.description === null) delete next.description;
   else if (typeof patch.description === 'string') next.description = patch.description;
+  if (patch.storageMode) next.storageMode = patch.storageMode;
+  if (typeof patch.rootPath === 'string') next.rootPath = patch.rootPath;
+  if (typeof patch.projectFileVersion === 'number') next.projectFileVersion = patch.projectFileVersion;
   await idbSet(INDEX_KEY, index.map((m) => (m.id === id ? next : m)));
   return next;
 }

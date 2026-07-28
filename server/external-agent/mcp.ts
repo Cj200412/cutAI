@@ -18,6 +18,10 @@ import {
   setTargetProject,
 } from './broker.ts';
 import { createExternalProject, listExternalProjects } from './projects.ts';
+import {
+  listWorkspaceFilesForCli,
+  readWorkspaceFileForCli,
+} from '../../desktop/workspace-project.ts';
 
 export const OPENCHATCUT_SKILL_BASELINE = '2026-07-27.1';
 
@@ -82,12 +86,34 @@ const CONTROL_TOOLS: Tool[] = [
   },
 ];
 
+const CLI_WORKSPACE_TOOLS: Tool[] = [
+  {
+    name: 'cutai_workspace_list_files',
+    description: 'List files and directories inside the authorized local CutAI workspace. .cutai metadata is hidden.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Workspace-relative directory path. Defaults to .' } },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'cutai_workspace_read_file',
+    description: 'Read a UTF-8 text file inside the authorized local CutAI workspace. Binary media and .cutai metadata are denied.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Workspace-relative file path.' } },
+      required: ['path'],
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+];
+
 function editorUrl(args: Record<string, unknown>, projectId: string, fallbackBase: string): string {
   const base = String(args.editorBaseUrl ?? '').trim() || fallbackBase;
   return `${base.replace(/\/+$/, '')}/#/editor/${encodeURIComponent(projectId)}`;
 }
 
-export function mcpTools(): Tool[] {
+export function mcpTools(cliToken?: string): Tool[] {
   const controls = new Set(CONTROL_TOOLS.map((tool) => tool.name));
   const editorTools = registeredTools()
     .filter((tool) => !controls.has(tool.name))
@@ -103,14 +129,21 @@ export function mcpTools(): Tool[] {
         },
       },
     }));
-  return [...CONTROL_TOOLS, ...editorTools];
+  return [...CONTROL_TOOLS, ...(cliToken ? CLI_WORKSPACE_TOOLS : []), ...editorTools];
 }
 
 async function callControlTool(
   name: string,
   args: Record<string, unknown>,
   baseUrl: string,
+  cliToken?: string,
 ): Promise<unknown | undefined> {
+  if (name === 'cutai_workspace_list_files' && cliToken) {
+    return listWorkspaceFilesForCli(cliToken, String(args.path ?? '.'));
+  }
+  if (name === 'cutai_workspace_read_file' && cliToken) {
+    return readWorkspaceFileForCli(cliToken, String(args.path ?? ''));
+  }
   if (name === 'openchatcut_status') {
     return { connectedProjectIds: connectedProjectIds(), editors: editorStatuses(), toolCount: mcpTools().length };
   }
@@ -139,11 +172,11 @@ async function callControlTool(
   return undefined;
 }
 
-async function callTool(name: string, rawArgs: unknown, baseUrl: string): Promise<unknown> {
+async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToken?: string): Promise<unknown> {
   const args = rawArgs && typeof rawArgs === 'object'
     ? { ...(rawArgs as Record<string, unknown>) }
     : {};
-  const control = await callControlTool(name, args, baseUrl);
+  const control = await callControlTool(name, args, baseUrl, cliToken);
   if (control !== undefined) return control;
   const projectId = resolveProjectId(args.editorProjectId);
   delete args.editorProjectId;
@@ -154,7 +187,7 @@ async function callTool(name: string, rawArgs: unknown, baseUrl: string): Promis
   return invokeEditorTool(projectId, name, args);
 }
 
-function makeServer(baseUrl: string): Server {
+function makeServer(baseUrl: string, cliToken?: string): Server {
   const server = new Server(
     { name: 'openchatcut', version: '1.0.0' },
     {
@@ -169,10 +202,10 @@ function makeServer(baseUrl: string): Server {
       ].join(' '),
     },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpTools() }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpTools(cliToken) }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
-      const result = await callTool(request.params.name, request.params.arguments, baseUrl);
+      const result = await callTool(request.params.name, request.params.arguments, baseUrl, cliToken);
       return {
         content: toMcpContent(result),
         structuredContent: toStructuredContent(result),
@@ -227,7 +260,9 @@ async function startMcpSession(
     sessionIdGenerator: randomUUID,
     onsessioninitialized: (sessionId) => { sessions.set(sessionId, session); },
   });
-  const server = makeServer(baseUrl);
+  const requestUrl = new URL(req.url ?? '/', baseUrl);
+  const cliToken = requestUrl.searchParams.get('cutaiCliToken') || undefined;
+  const server = makeServer(baseUrl, cliToken);
   session = { server, transport };
   transport.onclose = () => {
     const sessionId = transport.sessionId;

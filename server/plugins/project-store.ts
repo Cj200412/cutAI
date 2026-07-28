@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 
-const ROOT_DIR = join(homedir(), '.openchatcut');
+const ROOT_DIR = join(process.env.CUTAI_DATA_DIR?.trim() || join(homedir(), 'AppData', 'Roaming', 'CutAI'));
 const LEGACY_STORE_PATH = join(ROOT_DIR, 'project-store-v1.json');
 const LEGACY_BACKUP_PATH = `${LEGACY_STORE_PATH}.migrated`;
 const STORE_DIR = join(ROOT_DIR, 'project-store-v1');

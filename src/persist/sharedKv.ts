@@ -1,6 +1,6 @@
-const DB_NAME = 'openchatcut';
+const DB_NAME = 'cutai';
 const STORE = 'kv';
-const MIGRATION_KEY = '__openchatcut_shared_store_v1__';
+const MIGRATION_KEY = '__cutai_shared_store_v1__';
 const API_PATH = '/api/project-store';
 const memoryStore = new Map<string, unknown>();
 

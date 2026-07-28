@@ -4,7 +4,7 @@
 // works after restore.
 // Local-first stand-in for cloud object storage.
 
-const DB_NAME = 'openchatcut-media';
+const DB_NAME = 'cutai-media';
 const STORE = 'blobs';
 const DB_VERSION = 1;
 /** Skip caching giant files to avoid quota thrash (still on disk via /upload). */

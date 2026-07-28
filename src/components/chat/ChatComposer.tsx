@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import { getLocale, useT } from '../../i18n/locale';
-import type { AgentReference } from '../../agent/context';
+import type { AgentReference, AssetReference } from '../../agent/context';
 import { isSelectionRefKind } from '../../agent/selection-refs';
 import { Icon, type IconName } from '../icons';
 import { CREATIVE_SKILLS, allCreativeSkills, findSkill, setCustomSkills } from '../../agent/skills/skills-catalog';
 import { loadCustomSkills } from '../../persist/skillStore';
-import { loadAgentSettings, saveAgentSettings, MG_TIERS, type AgentSettings, type MgTier } from '../../agent/settings/agentSettings';
+import { loadAgentSettings, saveAgentSettings, MG_TIERS, type AgentSettings, type MgTier, type ReasoningEffort } from '../../agent/settings/agentSettings';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import {
   getAgentModelSnapshot,
@@ -56,6 +56,11 @@ interface ChatComposerProps {
   onDismissPasteError?: () => void;
   taRef: RefObject<HTMLTextAreaElement | null>;
   placeholder?: string;
+  agentSource: string;
+  cliProfiles: readonly CliAgentProfileResult[];
+  projectRoot?: string;
+  projectId: string;
+  onAgentSourceChange: (source: string) => void;
 }
 
 type Pop = 'mode' | 'model' | 'skill' | 'settings' | 'assets' | 'templates' | null;
@@ -106,7 +111,7 @@ function Popover({ children, onClose, w, anchor }: {
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 80 }} />
       <div style={{
         position: 'fixed', left: box.left, bottom: box.bottom, zIndex: 81,
-        minWidth: w ?? 220, maxWidth: 300, maxHeight: Math.min(280, window.innerHeight - box.bottom - 16),
+        minWidth: w ?? 220, maxWidth: 320, maxHeight: Math.min(420, window.innerHeight - box.bottom - 16),
         overflowY: 'auto', background: theme.panelAlt, border: `0.5px solid ${theme.borderLight}`,
     borderRadius: 6, boxShadow: `0 12px 40px ${themeAlpha.shadow(0.5)}`, padding: 6,
       }}>
@@ -125,6 +130,7 @@ const REF_ICON: Record<RefItem['kind'], IconName> = {
   // selection-mode picks (item / time / region / transcript references)
   item: 'film', timepoint: 'clock', timerange: 'clock',
   'canvas-region': 'aspect', 'transcript-selection': 'text',
+  document: 'text',
 };
 
 export function ChatComposer(props: ChatComposerProps) {
@@ -137,7 +143,7 @@ export function ChatComposer(props: ChatComposerProps) {
     autoApply, onAutoApplyChange, selecting, onToggleSelecting,
     creativeMode, onCreativeModeChange, references, onInsertRef,
     selectedRefs = [], onRemoveRef, onPasteFiles, pasting, pasteError, onDismissPasteError,
-    taRef, placeholder,
+    taRef, placeholder, agentSource, cliProfiles, projectRoot, projectId, onAgentSourceChange,
   } = props;
   // 水合自定义技能(manage_skill):挂载时读 IDB → 内存注册表,bump 触发重渲染
   // 让 allCreativeSkills()/findSkill 反映自定义技能。真源是 IDB,manage_skill 工具也水合同一份。
@@ -152,10 +158,28 @@ export function ChatComposer(props: ChatComposerProps) {
     getAgentModelSnapshot,
   );
   const activeModel = modelState.choices.find((choice) => choice.id === modelState.activeId);
+  const activeCli = cliProfiles.find((profile) => profile.id === agentSource);
   const builtinIds = new Set(CREATIVE_SKILLS.map((s) => s.id));
   const [pop, setPop] = useState<Pop>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [modelLayer, setModelLayer] = useState<'root' | 'api' | 'cli' | 'reasoning' | 'file-access'>('root');
+  const [modelQuery, setModelQuery] = useState('');
   const [popAnchor, setPopAnchor] = useState<HTMLElement | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => loadAgentSettings());
+  const cliModelKey = activeCli ? `cutai:cli-model:${projectId}:${activeCli.id}` : '';
+  const cliEffortKey = activeCli ? `cutai:cli-effort:${projectId}:${activeCli.id}` : '';
+  const cliFileAccessKey = activeCli ? `cutai:cli-file-access:${projectId}:${activeCli.id}` : '';
+  const [cliSelectionVersion, setCliSelectionVersion] = useState(0);
+  const selectedCliModelId = activeCli ? localStorage.getItem(cliModelKey) || activeCli.defaultModel || activeCli.models[0]?.id : undefined;
+  const selectedCliModel = activeCli?.models.find((model) => model.id === selectedCliModelId);
+  const selectedEffort = activeCli
+    ? (localStorage.getItem(cliEffortKey) as ReasoningEffort | null) || selectedCliModel?.defaultReasoningEffort || 'high'
+    : agentSettings.reasoningEffort || 'high';
+  const cliFileAccess = activeCli && localStorage.getItem(cliFileAccessKey) === 'workspace-write'
+    ? 'workspace-write'
+    : 'proposal-only';
+  void cliSelectionVersion;
+  const effortLabels: Record<ReasoningEffort, string> = { low: t('低'), medium: t('中'), high: t('高'), xhigh: t('超高'), max: t('最高') };
   const patchAgent = (patch: Partial<AgentSettings>) => {
     setAgentSettings((prev) => {
       const next = { ...prev, ...patch };
@@ -168,11 +192,16 @@ export function ChatComposer(props: ChatComposerProps) {
     const node = el instanceof HTMLElement ? el : null;
     setPop((cur) => {
       if (cur === p) { setPopAnchor(null); return null; }
+      if (p === 'model') { setModelLayer('root'); setModelQuery(''); }
       setPopAnchor(node);
       return p;
     });
   };
   const canSend = !!value.trim() && !running;
+  const filteredModelChoices = modelState.choices.filter((choice) => {
+    const query = modelQuery.trim().toLowerCase();
+    return !query || choice.model.toLowerCase().includes(query) || choice.providerLabel.toLowerCase().includes(query);
+  });
   const refList = (kind: 'asset' | 'template') =>
     references.filter((r) => (kind === 'template' ? r.kind === 'template' : r.kind !== 'template'));
 
@@ -216,19 +245,66 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const refPopoverBody = (kind: 'asset' | 'template', empty: string) => {
     const list = refList(kind);
+    const visual = kind === 'template';
     return (
       <>
-        <div style={{ fontSize: 10.5, color: theme.textDim, padding: '4px 8px 6px', letterSpacing: 0.4 }}>{kind === 'template' ? t('引用模板库') : t('引用媒体池素材')}</div>
+        <div style={{ padding: '5px 8px 7px' }}>
+          <div style={{ fontSize: 11, color: theme.text, fontWeight: 600 }}>{visual ? t('引用模板') : t('引用工程素材')}</div>
+          <div style={{ marginTop: 2, fontSize: 10, lineHeight: 1.4, color: theme.textDim }}>
+            {visual ? t('选择一个视觉模板作为 Agent 的设计参考') : t('把“我的素材”中的文件附到下一条消息，不会自动放入时间线')}
+          </div>
+        </div>
+        {!visual && onPasteFiles && (
+          <div style={{ padding: '0 5px 6px' }}>
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              hidden
+              accept="video/*,image/*,audio/*,.gif,.svg,.txt,.md,.markdown,.csv,.json,.srt,.vtt,.log,text/*,application/json"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                if (files.length) void onPasteFiles(files);
+                event.target.value = '';
+                closePop();
+              }}
+            />
+            <button type="button" onClick={() => attachmentInputRef.current?.click()}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '7px 8px', border: `0.5px solid ${theme.border}`, borderRadius: 4, background: theme.panel, color: theme.text, cursor: 'pointer', textAlign: 'left', fontSize: 11.5 }}>
+              <Icon name="plus" size={13} />
+              <span>{t('从电脑附加文件')}</span>
+            </button>
+          </div>
+        )}
         {list.length === 0 && <div style={{ fontSize: 12, color: theme.textDim, padding: '6px 10px' }}>{empty}</div>}
+        <div style={visual ? { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 7, padding: '0 4px 4px' } : undefined}>
         {list.map((r) => (
           <button key={r.id} onClick={() => insert(r)}
-        style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 3, padding: '7px 10px', cursor: 'pointer', color: theme.text }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = theme.panel; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
-            <span style={{ color: theme.textDim, lineHeight: 0 }}><Icon name={REF_ICON[r.kind]} size={15} /></span>
-            <span style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+        style={visual
+          ? { display: 'block', minWidth: 0, width: '100%', textAlign: 'left', background: theme.panel, border: `0.5px solid ${theme.border}`, borderRadius: 5, padding: 0, overflow: 'hidden', cursor: 'pointer', color: theme.text }
+          : { display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 3, padding: '7px 10px', cursor: 'pointer', color: theme.text }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = visual ? theme.inset : theme.panel; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = visual ? theme.panel : 'none'; }}>
+            {visual ? (
+              <>
+                <span style={{ display: 'block', position: 'relative', aspectRatio: '16 / 9', background: theme.bg, overflow: 'hidden' }}>
+                  {(r as AssetReference).preview ? <img src={(r as AssetReference).preview} alt={r.name} loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: ((r as AssetReference).height || 0) > ((r as AssetReference).width || 1) ? 'contain' : 'cover' }} />
+                    : <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: theme.textDim }}><Icon name="bookOpen" size={20} /></span>}
+                </span>
+                <span style={{ display: 'block', padding: '6px 7px 7px', minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</strong>
+                  <small style={{ display: 'block', marginTop: 2, color: theme.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(r as AssetReference).category || (r as AssetReference).description || t('模板')}</small>
+                </span>
+              </>
+            ) : (
+              <>
+                <span style={{ color: theme.textDim, lineHeight: 0 }}><Icon name={REF_ICON[r.kind]} size={15} /></span>
+                <span style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+              </>
+            )}
           </button>
         ))}
+        </div>
       </>
     );
   };
@@ -333,7 +409,9 @@ export function ChatComposer(props: ChatComposerProps) {
           </button>
           <button
             type="button"
-            title={activeModel
+            title={activeCli
+              ? t('当前 Agent：{name}', { name: `${activeCli.name} · ${activeCli.version}` })
+              : activeModel
               ? t('当前模型：{name}', { name: `${activeModel.providerLabel} · ${activeModel.model}` })
               : t('选择模型')}
             onClick={(event) => toggle('model', event.currentTarget)}
@@ -348,21 +426,21 @@ export function ChatComposer(props: ChatComposerProps) {
               border: 0,
               borderRadius: 4,
               background: pop === 'model' ? theme.panel : 'transparent',
-              color: activeModel ? theme.textDim : theme.textDim,
+              color: activeModel || activeCli ? theme.textDim : theme.textDim,
               cursor: 'pointer',
               fontSize: 11,
               flexShrink: 1,
             }}
           >
-            <Icon name="cloud" size={13} />
+            <Icon name={activeCli ? 'plug' : 'cloud'} size={13} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {activeModel?.model ?? t('模型')}
+              {activeCli?.name ?? activeModel?.model ?? t('模型')}
             </span>
             <Icon name="chevronDown" size={10} />
           </button>
           <BarBtn icon="sliders" title={t('设置')} active={pop === 'settings'} onClick={(e) => toggle('settings', e.currentTarget)} />
           <BarBtn icon="cursor" title={t('选择模式：点片段 / 拖画布 / 选文字稿作为引用')} active={selecting} onClick={onToggleSelecting} />
-          <BarBtn icon="plus" title={t('引用媒体池素材')} active={pop === 'assets'} onClick={(e) => toggle('assets', e.currentTarget)} />
+          <BarBtn icon="plus" title={t('引用工程素材（从“我的素材”选择）')} active={pop === 'assets'} onClick={(e) => toggle('assets', e.currentTarget)} />
           <BarBtn icon="wand" title={activeSkill ? t('创作模式：{name}', { name: skillName(activeSkill) }) : t('创作模式')} active={pop === 'skill' || !!activeSkill} onClick={(e) => toggle('skill', e.currentTarget)} />
           <BarBtn icon="bookOpen" title={t('引用模板库')} active={pop === 'templates'} onClick={(e) => toggle('templates', e.currentTarget)} />
           <BarBtn icon="sparkles" title={enhancing ? t('增强中…') : t('增强提示词')} disabled={enhancing || !value.trim() || running} onClick={onEnhance} />
@@ -388,28 +466,153 @@ export function ChatComposer(props: ChatComposerProps) {
         </Popover>
       )}
       {pop === 'model' && (
-        <Popover w={278} anchor={popAnchor} onClose={closePop}>
-          <div style={{ fontSize: 10.5, color: theme.textDim, padding: '4px 8px 6px' }}>
-            {t('本条对话使用的模型')}
+        <Popover w={306} anchor={popAnchor} onClose={closePop}>
+          {modelLayer === 'root' ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10.5, color: theme.textDim, padding: '5px 8px 6px', letterSpacing: 0.3 }}>
+                <strong style={{ color: theme.text, fontSize: 11 }}>{t('AGENT 选择')}</strong>
+                <span>{1 + cliProfiles.filter((profile) => profile.compatible).length}/{1 + cliProfiles.length}</span>
+              </div>
+              <button type="button" onClick={() => onAgentSourceChange('api')}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: agentSource === 'api' ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: agentSource === 'api' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                <Icon name="cloud" size={15} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: 12 }}>ChatCut</strong>
+                  <small style={{ color: theme.textDim }}>{activeModel ? `${activeModel.providerLabel} · ${activeModel.model}` : t('尚未配置模型')}</small>
+                </span>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.success }} />
+              </button>
+              {cliProfiles.map((profile) => {
+                const active = agentSource === profile.id;
+                const authorized = Boolean(projectRoot && profile.authorizedRoots.includes(projectRoot));
+                return <button type="button" key={profile.id} disabled={!profile.compatible}
+                  onClick={() => { onAgentSourceChange(profile.id); closePop(); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: active ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: active ? theme.panel : 'transparent', color: profile.compatible ? theme.text : theme.textDim, cursor: profile.compatible ? 'pointer' : 'default', textAlign: 'left' }}>
+                  <Icon name="plug" size={15} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <strong style={{ display: 'block', fontSize: 12 }}>{profile.kind === 'claude' ? 'Claude Code' : 'Codex CLI'}</strong>
+                    <small style={{ color: theme.textDim }}>{profile.compatible ? `${profile.version} · ${authorized ? t('已授权') : t('待授权')}` : profile.reason || t('不可用')}</small>
+                  </span>
+                  <span title={authorized ? t('已授权') : t('待授权')} style={{ width: 7, height: 7, borderRadius: '50%', background: !profile.compatible ? theme.textDim : authorized ? theme.success : theme.accent }} />
+                </button>;
+              })}
+              <div style={{ marginTop: 5, borderTop: `0.5px solid ${theme.border}`, paddingTop: 5 }}>
+                <div style={{ fontSize: 10.5, color: theme.textDim, padding: '4px 8px' }}>{t('设置')}</div>
+                <button type="button" onClick={() => { setModelQuery(''); setModelLayer(agentSource === 'api' ? 'api' : 'cli'); }} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{t('模型')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: theme.textDim, fontSize: 11, maxWidth: 175 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeCli ? selectedCliModel?.label || activeCli.defaultModel || t('默认') : activeModel?.model ?? t('未配置')}</span><span>›</span></span>
+                </button>
+                <button type="button" onClick={() => setModelLayer('reasoning')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{t('推理强度')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: theme.textDim, fontSize: 11 }}>{effortLabels[selectedEffort]}<span>›</span></span>
+                </button>
+                {activeCli && <button type="button" onClick={() => setModelLayer('file-access')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{t('文件权限')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: cliFileAccess === 'workspace-write' ? theme.gold : theme.textDim, fontSize: 11 }}>{cliFileAccess === 'workspace-write' ? t('直接编辑') : t('安全提案')}<span>›</span></span>
+                </button>}
+                <button type="button" onClick={() => onAutoApplyChange(!autoApply)} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{t('自动允许生成')}</span>
+                  <span aria-label={autoApply ? t('已开启') : t('已关闭')} style={{ width: 28, height: 16, borderRadius: 999, padding: 2, boxSizing: 'border-box', background: autoApply ? theme.accent : theme.borderLight, display: 'flex', justifyContent: autoApply ? 'flex-end' : 'flex-start' }}><span style={{ width: 12, height: 12, borderRadius: '50%', background: theme.panel }} /></span>
+                </button>
+              </div>
+            </>
+          ) : (
+          <>
+          <button type="button" onClick={() => setModelLayer('root')} style={{ display: 'flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent', color: theme.textDim, padding: '3px 8px 7px', cursor: 'pointer', fontSize: 11 }}><span>‹</span>{t('返回 Agent 选择')}</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: theme.textDim, padding: '4px 8px 6px', letterSpacing: 0.3 }}>
+            <strong style={{ color: theme.text }}>{modelLayer === 'reasoning' ? t('推理强度') : modelLayer === 'file-access' ? t('文件权限') : modelLayer === 'cli' ? (activeCli?.name ?? t('本地 CLI')) : t('选择模型')}</strong>
+            {modelLayer === 'api' && <span>{filteredModelChoices.length}/{modelState.choices.length}</span>}
+          </div>
+          {modelLayer === 'file-access' ? (
+            <div>
+              <button type="button" onClick={() => {
+                localStorage.setItem(cliFileAccessKey, 'proposal-only');
+                setCliSelectionVersion((value) => value + 1);
+                setModelLayer('root');
+              }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', border: 0, borderRadius: 4, background: cliFileAccess === 'proposal-only' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                <span><strong style={{ display: 'block', fontSize: 12 }}>{t('安全提案')}</strong><small style={{ color: theme.textDim }}>{t('只读工程，编辑前由 CutAI 展示提案')}</small></span>
+                {cliFileAccess === 'proposal-only' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.accent }} />}
+              </button>
+              <button type="button" onClick={() => {
+                if (!window.confirm(t('高风险权限：直接编辑会绕过 CLI 文件沙箱，并可能绕过 CutAI 提案与撤销。CLI 理论上可访问工程外文件，请只向可信 CLI 下达明确任务。确定启用吗？'))) return;
+                localStorage.setItem(cliFileAccessKey, 'workspace-write');
+                setCliSelectionVersion((value) => value + 1);
+                setModelLayer('root');
+              }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', border: 0, borderRadius: 4, background: cliFileAccess === 'workspace-write' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                <span><strong style={{ display: 'block', fontSize: 12, color: theme.gold }}>{t('直接编辑')}</strong><small style={{ color: theme.textDim }}>{t('绕过 CLI 文件沙箱，可直接修改本机文件')}</small></span>
+                {cliFileAccess === 'workspace-write' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.gold }} />}
+              </button>
+            </div>
+          ) : modelLayer === 'reasoning' ? (
+            <div>
+              {(activeCli ? selectedCliModel?.reasoningEfforts || ['low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max']).map((effort) => {
+                const typedEffort = effort as ReasoningEffort;
+                const active = selectedEffort === typedEffort;
+                return <button key={effort} type="button" onClick={() => {
+                  if (activeCli) localStorage.setItem(cliEffortKey, typedEffort);
+                  else patchAgent({ thinkingEnabled: true, reasoningEffort: typedEffort });
+                  setCliSelectionVersion((value) => value + 1);
+                  setModelLayer('root');
+                }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', border: 0, borderRadius: 4, background: active ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{effortLabels[typedEffort]}</span>
+                  {active && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.accent }} />}
+                </button>;
+              })}
+            </div>
+          ) : modelLayer === 'cli' ? (
+            <div>
+              {(activeCli?.models ?? []).map((model) => {
+                const active = model.id === selectedCliModelId;
+                return <button key={model.id} type="button" onClick={() => {
+                  localStorage.setItem(cliModelKey, model.id);
+                  if (!model.reasoningEfforts.includes(selectedEffort)) localStorage.setItem(cliEffortKey, model.defaultReasoningEffort);
+                  setCliSelectionVersion((value) => value + 1);
+                  closePop();
+                }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', border: 0, borderRadius: 4, background: active ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span>{model.label}</span>
+                  {active && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.accent }} />}
+                </button>;
+              })}
+              {activeCli?.models.length === 0 && <div style={{ padding: '9px 10px', color: theme.textDim, fontSize: 11.5 }}>{t('CLI 未提供可读取的模型目录')}</div>}
+              {!projectRoot && <div style={{ padding: '8px 10px', color: theme.gold, fontSize: 11.5 }}>{t('请迁移到本地文件夹工程后再开始 CLI 对话。')}</div>}
+            </div>
+          ) : <>
+          <div style={{ padding: '2px 7px 6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: `0.5px solid ${theme.border}`, borderRadius: 5, padding: '5px 7px', background: theme.inset }}>
+              <Icon name="search" size={13} />
+              <input value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder={t('搜索模型')}
+                style={{ width: '100%', minWidth: 0, border: 0, outline: 0, background: 'transparent', color: theme.text, fontSize: 11.5 }} />
+            </div>
           </div>
           {modelState.choices.length === 0 && (
             <div style={{ padding: '7px 9px 9px', color: theme.textDim, fontSize: 11.5, lineHeight: 1.5 }}>
               {modelState.loaded ? t('请先在设置中配置一个模型厂商。') : t('正在读取模型配置…')}
             </div>
           )}
-          {modelState.choices.map((choice) => {
-            const active = choice.id === modelState.activeId;
+          {modelState.choices.length > 0 && filteredModelChoices.length === 0 && (
+            <div style={{ padding: '10px', color: theme.textDim, fontSize: 11.5 }}>{t('没有匹配的模型')}</div>
+          )}
+          {filteredModelChoices.map((choice, index) => {
+            const active = agentSource === 'api' && choice.id === modelState.activeId;
+            const previous = filteredModelChoices[index - 1];
+            const showProvider = !previous || previous.provider !== choice.provider;
             return (
+              <div key={choice.id}>
+              {showProvider && (
+                <div style={{ padding: '6px 9px 3px', color: theme.textDim, fontSize: 10.5, borderTop: index ? `0.5px solid ${theme.border}` : undefined }}>
+                  {choice.providerLabel}
+                </div>
+              )}
               <button
                 type="button"
-                key={choice.id}
-                onClick={() => { selectAgentModel(choice.id); closePop(); }}
+                onClick={() => {
+                  onAgentSourceChange('api');
+                  selectAgentModel(choice.id);
+                  closePop();
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 9,
                   width: '100%',
-                  padding: '7px 9px',
+                  padding: '6px 9px 6px 18px',
                   border: 0,
                   borderRadius: 3,
                   background: active ? theme.panel : 'transparent',
@@ -419,17 +622,18 @@ export function ChatComposer(props: ChatComposerProps) {
                 }}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <strong style={{ display: 'block', fontSize: 11.5, fontWeight: 600 }}>
-                    {choice.providerLabel}
-                  </strong>
-                  <small style={{ display: 'block', color: theme.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <small style={{ display: 'block', color: active ? theme.text : theme.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {choice.model}
                   </small>
                 </span>
                 {active && <span style={{ color: theme.accent, lineHeight: 0 }}><Icon name="check" size={13} /></span>}
               </button>
+              </div>
             );
           })}
+          </>}
+          </>
+          )}
         </Popover>
       )}
       {pop === 'settings' && (
@@ -476,7 +680,7 @@ export function ChatComposer(props: ChatComposerProps) {
       )}
       {pop === 'assets' && (
         <Popover anchor={popAnchor} onClose={closePop}>
-          {refPopoverBody('asset', t('媒体池暂无素材'))}
+          {refPopoverBody('asset', t('“我的素材”中暂无可引用文件'))}
         </Popover>
       )}
       {pop === 'skill' && (

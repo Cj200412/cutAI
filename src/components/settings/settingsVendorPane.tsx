@@ -263,7 +263,7 @@ function DirectoryInput({ field, shown, stagedClear, onStage }: {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const picker = window.openChatCutDesktop?.selectDirectory;
+  const picker = window.cutaiDesktop?.selectDirectory;
   const pick = async (): Promise<void> => {
     if (!picker) return;
     setBusy(true); setError(null);

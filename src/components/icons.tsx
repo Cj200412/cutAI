@@ -129,31 +129,30 @@ export function Icon({ name, size = 16, color = 'currentColor', strokeWidth = 1.
  *  (皮肤纪律保证 ≥4.5 对比)。凡替代 wordmark 前的 sparkles 用这个。 */
 export function BrandMark({ size = 16 }: { size?: number }) {
   return (
-    <img src="/openchatcut-icon.png" alt="" aria-hidden width={size} height={size} style={{ display: 'block' }} />
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden style={{ display: 'block', flexShrink: 0 }}>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="currentColor" />
+      <path d="M7 7.5h6.2a3.8 3.8 0 1 1 0 7.6H10.8a2.3 2.3 0 1 0 0 4.6H17" fill="none" stroke="var(--cc-panel, #111)" strokeWidth="2.3" strokeLinecap="round" />
+    </svg>
   );
 }
 
 /** OpenChatCut 文字标：OPEN 反白徽章 + Chat Cut 实心字标。 */
-export function OpenChatCutWordmark({ width = 126 }: { width?: number }) {
+export function CutaiWordmark({ width = 126 }: { width?: number }) {
   return (
     <svg
-      aria-label="OpenChatCut"
+      aria-label="CutAI"
       role="img"
       width={width}
       height={width / 4}
       viewBox="0 0 504 126"
       style={{ display: 'block', flexShrink: 0 }}
     >
-      <rect x="0" y="13" width="166" height="92" rx="14" fill="currentColor" />
       <text
         fontFamily="Inter, system-ui, sans-serif"
         dominantBaseline="alphabetic"
       >
-        <tspan x="83" y="82" textAnchor="middle" fill="var(--cc-panel)" fontSize="58" fontWeight="850" letterSpacing="-0.045em">
-          OPEN
-        </tspan>
-        <tspan x="188" y="79" fill="currentColor" fontSize="62" fontWeight="720" letterSpacing="-0.045em">
-          Chat Cut
+        <tspan x="0" y="82" fill="currentColor" fontSize="76" fontWeight="780" letterSpacing="-0.06em">
+          CutAI
         </tspan>
       </text>
     </svg>

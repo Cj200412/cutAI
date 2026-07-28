@@ -221,7 +221,7 @@ export async function runAgent(
         maxRetries: 0,
         abortSignal: opts?.signal,
         ...(providerOptions ? { providerOptions } : {}),
-        ...(withReasoning ? { reasoning: 'medium' as const } : {}),
+        ...(withReasoning ? { reasoning: settings.reasoningEffort === 'max' ? 'xhigh' as const : settings.reasoningEffort || 'high' as const } : {}),
       });
 
       let aborted = false;

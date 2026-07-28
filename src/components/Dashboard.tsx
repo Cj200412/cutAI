@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { theme } from '../theme';
 import { loadProject, loadProjectThumb, saveProjectThumb, type ProjectMeta } from '../persist/projectStore';
-import { BrandMark, Icon, OpenChatCutWordmark } from './icons';
+import { BrandMark, CutaiWordmark, Icon } from './icons';
 import { SettingsDialog } from './settings/SettingsDialog';
 import { McpGuideDialog } from './settings/McpGuide';
 import { SkinPicker } from './settings/SkinPicker';
@@ -14,11 +14,16 @@ interface DashboardProps {
   projects: ProjectMeta[];
   onOpen: (id: string) => void;
   onNew: () => void;
+  onNewTemporary: () => void;
+  onOpenWorkspace: () => Promise<string>;
+  onMigrateWorkspace: (id: string) => Promise<string>;
   onRename: (id: string, name: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => Promise<void>;
   /** 导出工程为 .ccproj.json(跨端迁移);返回给用户看的结果文案 */
   onExport: (id: string, name: string) => Promise<string>;
+  onSaveCutaiProject: (id: string, name: string) => Promise<string>;
+  onOpenCutaiProject: () => Promise<string>;
   /** 导入 .ccproj.json;返回结果文案 */
   onImport: (file: File) => Promise<string>;
 }
@@ -54,7 +59,7 @@ async function renderProjectPoster(m: ProjectMeta): Promise<string | null> {
   return b64 ? `data:image/jpeg;base64,${b64}` : null;
 }
 
-export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDelete, onExport, onImport }: DashboardProps) {
+export function Dashboard({ projects, onOpen, onNew, onNewTemporary, onOpenWorkspace, onMigrateWorkspace, onRename, onDuplicate, onDelete, onExport, onSaveCutaiProject, onOpenCutaiProject, onImport }: DashboardProps) {
   const t = useT();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -134,7 +139,7 @@ export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDe
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: theme.bg, color: theme.text, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <header style={{ height: 48, flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '0 24px', borderBottom: `0.5px solid ${theme.border}`, background: theme.panel }}>
         <BrandMark size={20} />
-        <OpenChatCutWordmark />
+        <CutaiWordmark />
         <span style={{ color: theme.textDim, fontSize: 13 }}>{t('· 我的工程')}</span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
           <button onClick={() => setMcpOpen(true)} title={t('外部 Agent 接入 (MCP)')} className="cc-header-btn" style={settingsBtn}>
@@ -160,6 +165,12 @@ export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDe
             <button onClick={() => setCleanupOpen(true)} style={importBtn} title={t('清理所有工程都不引用的上传素材(测试/已删工程残留)')}>
               <Icon name="trash" size={13} /> {t('清理素材')}
             </button>
+            {window.cutaiDesktop && <button onClick={() => void runTransfer(onOpenWorkspace())} disabled={busy} style={importBtn} title={t('打开包含 .cutai 元数据目录的本地文件夹')}>
+              <Icon name="folder" size={13} /> {t('打开本地工程')}
+            </button>}
+            {window.cutaiDesktop && <button onClick={() => void runTransfer(onOpenCutaiProject())} disabled={busy} style={importBtn} title={t('打开目录式 .cutai 工程')}>
+              <Icon name="folder" size={13} /> {t('打开旧工程包')}
+            </button>}
             <button onClick={() => fileRef.current?.click()} disabled={busy} style={importBtn} title={t('导入 .ccproj.json 工程文件(含素材;可来自浏览器版/其它机器)')}>
               <Icon name="upload" size={13} /> {t('导入工程')}
             </button>
@@ -168,10 +179,37 @@ export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDe
           </span>
         </div>
 
+        <section style={quickStart}>
+          <div style={{ minWidth: 190 }}>
+            <div style={{ color: theme.accent, fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>{t('第一次使用')}</div>
+            <h2 style={{ margin: '5px 0 4px', fontSize: 18 }}>{t('四步完成第一条视频')}</h2>
+            <div style={{ color: theme.textDim, fontSize: 12, lineHeight: 1.6 }}>{t('不配置 AI 也能完成基础剪辑；Agent 是可选助手。')}</div>
+          </div>
+          <div style={quickSteps}>
+            {[
+              ['1', t('选择本地文件夹创建工程')],
+              ['2', t('点“上传素材”导入视频')],
+              ['3', t('把素材拖到下方时间轴')],
+              ['4', t('右上角“导出”生成 MP4')],
+            ].map(([number, label]) => (
+              <div key={number} style={quickStep}>
+                <span style={quickNumber}>{number}</span>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={onNew} style={startBtn}>{t('开始新工程')}</button>
+        </section>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))', alignItems: 'start', gap: 16 }}>
           <button onClick={onNew} style={newCard} title={t('新建工程')}>
             <span style={{ fontSize: 30, color: theme.textDim, lineHeight: 1 }}>＋</span>
-            <span style={{ fontSize: 13, color: theme.textDim }}>{t('新建工程')}</span>
+            <span style={{ fontSize: 13, color: theme.text }}>{t('新建本地工程')}</span>
+            <span style={{ fontSize: 11, color: theme.textDim }}>{t('元数据保存在文件夹内 .cutai')}</span>
+          </button>
+          <button onClick={onNewTemporary} style={newCard} title={t('创建不绑定本地文件夹的临时工程')}>
+            <span style={{ fontSize: 25, color: theme.textDim, lineHeight: 1 }}>◇</span>
+            <span style={{ fontSize: 13, color: theme.textDim }}>{t('临时工程')}</span>
           </button>
 
           {projects.map((m) => (
@@ -197,7 +235,10 @@ export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDe
                   <div onDoubleClick={() => startRename(m)} title={t('双击重命名')} style={{ fontSize: 13, fontWeight: 550, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
                 )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 11, color: theme.textDim, fontVariantNumeric: 'tabular-nums' }}>{relTime(m.updatedAt)}</span>
+                  <span style={{ fontSize: 11, color: theme.textDim, fontVariantNumeric: 'tabular-nums', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={m.rootPath ?? ''}>
+                    {m.storageMode === 'workspace' ? t('本地') : t('临时')} · {relTime(m.updatedAt)}
+                  </span>
                   <div style={{ display: 'flex', gap: 2 }} className="acts">
                     {confirmId === m.id ? (
                       <button
@@ -215,6 +256,12 @@ export function Dashboard({ projects, onOpen, onNew, onRename, onDuplicate, onDe
                       <>
                         <button onClick={() => startRename(m)} style={miniBtn} title={t('重命名')}><Icon name="pencil" size={13} /></button>
                         <button onClick={() => onDuplicate(m.id)} style={miniBtn} title={t('复制')}><Icon name="copy" size={13} /></button>
+                        {window.cutaiDesktop && m.storageMode !== 'workspace' && (
+                          <button onClick={() => void runTransfer(onMigrateWorkspace(m.id))} disabled={busy} style={miniBtn} title={t('迁移到本地文件夹工程')}>
+                            <Icon name="folder" size={13} />
+                          </button>
+                        )}
+                        {window.cutaiDesktop && <button onClick={() => void runTransfer(onSaveCutaiProject(m.id, m.name))} disabled={busy} style={miniBtn} title={t('保存为目录式 .cutai 工程')}><Icon name="folder" size={13} /></button>}
                         <button onClick={() => void runTransfer(onExport(m.id, m.name))} disabled={busy} style={miniBtn} title={t('导出为 .ccproj.json(含素材,可在桌面版/其它机器导入)')}><Icon name="download" size={13} /></button>
                         <button onClick={() => setConfirmId(m.id)} style={miniBtn} title={t('删除')}><Icon name="trash" size={13} /></button>
                       </>
@@ -252,4 +299,22 @@ const settingsBtn: React.CSSProperties = { background: 'none', border: 'none', c
 const importBtn: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.text,
   background: 'none', border: `0.5px solid ${theme.border}`, borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+};
+const quickStart: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 22, marginBottom: 22, padding: '16px 18px',
+  border: `0.5px solid ${theme.border}`, borderRadius: 8, background: theme.panel,
+};
+const quickSteps: React.CSSProperties = {
+  flex: 1, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(170px, 1fr))', gap: '8px 16px',
+};
+const quickStep: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8, color: theme.text, fontSize: 12,
+};
+const quickNumber: React.CSSProperties = {
+  width: 20, height: 20, borderRadius: 10, display: 'grid', placeItems: 'center',
+  background: theme.panelAlt, color: theme.accent, fontSize: 11, fontWeight: 700,
+};
+const startBtn: React.CSSProperties = {
+  flex: '0 0 auto', border: 'none', borderRadius: 6, padding: '8px 13px',
+  background: theme.accent, color: '#fff', cursor: 'pointer', fontWeight: 650, fontSize: 12,
 };

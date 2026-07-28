@@ -14,6 +14,13 @@ interface LlmProviderPreset {
 
 export const LLM_PROVIDER_PRESETS = [
   {
+    id: 'llm-proxy',
+    label: '本机 llm-proxy',
+    protocol: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:15722/v1',
+    defaultModel: 'claude-sonnet-5',
+  },
+  {
     id: 'anthropic',
     label: 'Anthropic · Claude',
     protocol: 'anthropic',

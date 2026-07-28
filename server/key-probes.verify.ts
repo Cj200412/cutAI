@@ -71,7 +71,7 @@ assert.match(networkMessage(Object.assign(new Error('The operation was aborted d
 {
   const unset = await runProbe('storage/local', {});
   assert.equal(unset.ok, true);
-  assert.match(unset.message, /默认目录 .*public\/media\/uploads/); // 文案带机器相关绝对路径,只锚定尾段
+  assert.match(unset.message, /默认目录 .*public[\\/]media[\\/]uploads/); // 文案带机器相关绝对路径,兼容 Windows/Posix 分隔符
   const relative = await runProbe('storage/local', { MEDIA_DIR: 'relative/path' });
   assert.equal(relative.ok, false);
   assert.match(relative.message, /绝对路径/);

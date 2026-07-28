@@ -21,6 +21,7 @@ const ENV_PATH = resolve(process.cwd(), '.env.local');
 // rejects anything outside this set so the endpoint can never write arbitrary env.
 export const KEY_NAMES = [
   'LLM_API_KEY', 'LLM_BASE_URL', 'LLM_BASE_URL_FORMAT',
+  'LLM_LLM_PROXY_API_KEY', 'LLM_LLM_PROXY_BASE_URL', 'LLM_LLM_PROXY_MODEL',
   'LLM_ANTHROPIC_API_KEY', 'LLM_ANTHROPIC_BASE_URL', 'LLM_ANTHROPIC_MODEL',
   'LLM_OPENAI_API_KEY', 'LLM_OPENAI_BASE_URL', 'LLM_OPENAI_MODEL', 'LLM_OPENAI_API_MODE',
   'LLM_GEMINI_API_KEY', 'LLM_GEMINI_BASE_URL', 'LLM_GEMINI_MODEL',

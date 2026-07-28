@@ -5,7 +5,8 @@ import type { SubmitVideoArgs } from '../../generate/video';
 import type { SubmitVoiceArgs } from '../../generate/voice';
 
 export type GenerateArgs = Record<string, unknown>;
-export const shouldAddImageToTimeline = (args: GenerateArgs): boolean => args.addToTimeline !== false;
+// AI 生成结果先进入媒体池，给用户预览和挑选；只有明确要求时才放入时间线。
+export const shouldAddImageToTimeline = (args: GenerateArgs): boolean => args.addToTimeline === true;
 
 const str = (value: unknown): string | undefined => {
   if (typeof value !== 'string') return undefined;

@@ -105,6 +105,12 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
   stateRef.current = state;
   const docRef = useRef(doc);
   docRef.current = doc;
+  const persistProjectDoc = useCallback(async (next: ProjectDoc): Promise<void> => {
+    await saveProject(project.id, next);
+    if (project.storageMode === 'workspace' && project.rootPath && window.cutaiDesktop) {
+      await window.cutaiDesktop.saveWorkspace(project.rootPath, next);
+    }
+  }, [project.id, project.rootPath, project.storageMode]);
   const { offlineSrcs, offlineSrcsRef, offlineAssetIds, markOffline: markMediaOffline } = useOfflineMedia(doc);
 // 创作模式:选中的技能 id 注入系统提示，并存入 IDB(不进 undo 历史)。
   const [creativeMode, setCreativeMode] = useState<string | null>(null);
@@ -139,7 +145,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
       openProject: async (projectId: string) => {
         // Flush current doc before hash navigation remounts the editor.
         try {
-          await saveProject(project.id, docRef.current);
+          await persistProjectDoc(docRef.current);
         } catch {
           /* ignore */
         }
@@ -149,7 +155,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
       },
       onProjectRenamed: onRename,
     }),
-    [commands, project.id, onRename, changeCreativeMode],
+    [commands, project.id, onRename, changeCreativeMode, persistProjectDoc],
   );
   // a pending proposal's draft result, previewed in the player (null = committed)
   const [previewState, setPreviewState] = useState<TimelineState | null>(null);
@@ -270,16 +276,16 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
     unsavedRef.current = doc;
     const id = setTimeout(() => {
       unsavedRef.current = null;
-      void saveProject(project.id, doc);
+      void persistProjectDoc(doc);
     }, 500);
     return () => clearTimeout(id);
-  }, [doc, project.id]);
+  }, [doc, project.id, persistProjectDoc]);
   useEffect(() => {
     const flush = (): void => {
       const pending = unsavedRef.current;
       if (!pending) return;
       unsavedRef.current = null;
-      void saveProject(project.id, pending).catch(() => { /* 关页途中失败无处可报 */ });
+      void persistProjectDoc(pending).catch(() => { /* 关页途中失败无处可报 */ });
     };
     // pagehide 覆盖关标签/刷新/前进后退;卸载时的清理覆盖返回工程列表与切工程。
     window.addEventListener('pagehide', flush);
@@ -287,7 +293,31 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
       window.removeEventListener('pagehide', flush);
       flush();
     };
-  }, [project.id]);
+  }, [project.id, persistProjectDoc]);
+
+  // Local workspace projects watch for newly added media without copying it.
+  useEffect(() => {
+    if (project.storageMode !== 'workspace' || !project.rootPath || !window.cutaiDesktop) return;
+    let alive = true;
+    const scan = async (): Promise<void> => {
+      const media = await window.cutaiDesktop!.rescanWorkspace(project.rootPath!);
+      if (!alive) return;
+      const known = new Set(docRef.current.assets.map((asset) => asset.src));
+      for (const item of media) {
+        if (item.kind === 'subtitle' || known.has(item.url)) continue;
+        commands.addAsset({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          src: item.url,
+          durationInFrames: item.kind === 'image' || item.kind === 'gif' || item.kind === 'svg' ? 150 : 30,
+        });
+      }
+    };
+    void scan().catch(() => {});
+    const timer = window.setInterval(() => { void scan().catch(() => {}); }, 10_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [commands, project.rootPath, project.storageMode]);
 
   // Rehydrate missing /media/uploads files from IDB blob cache (disk wipe / new clone).
   // Also resume any open generation jobs so refresh mid-generate still lands assets.
@@ -509,7 +539,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
 
       {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
 
-      <ChatPanel ctx={agentCtx} projectId={project.id} collapsed={chatCollapsed} onToggleCollapse={() => setChatCollapsed((v) => !v)} onPreviewState={setPreviewState} seed={chatSeed} creativeMode={creativeMode} onCreativeModeChange={changeCreativeMode} onImportMedia={importToPool} />
+      <ChatPanel ctx={agentCtx} projectId={project.id} projectRoot={project.rootPath} collapsed={chatCollapsed} onToggleCollapse={() => setChatCollapsed((v) => !v)} onPreviewState={setPreviewState} seed={chatSeed} creativeMode={creativeMode} onCreativeModeChange={changeCreativeMode} onImportMedia={importToPool} />
 
       <div style={{ gridColumn: 2, gridRow: '2 / 5' }}>
         {!chatCollapsed && <Divider onResize={(dx) => setChatW((w) => clamp(w + dx, CHAT_MIN_W, Math.max(CHAT_MIN_W, viewportW - libW - CANVAS_MIN_W - SPLITTER_TOTAL_W)))} />}

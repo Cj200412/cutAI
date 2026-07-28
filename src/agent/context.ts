@@ -13,13 +13,29 @@ export interface AssetReference {
   id: string;
   name: string;
   kind: AssetRefKind;
+  preview?: string;
+  description?: string;
+  category?: string;
+  width?: number;
+  height?: number;
+  metadata?: undefined;
+}
+
+/** A small text document attached directly to one chat turn. It is conversation
+ * context, not a media-pool asset and never lands on the timeline. */
+export interface DocumentReference {
+  id: string;
+  name: string;
+  kind: 'document';
+  mimeType: string;
+  text: string;
   metadata?: undefined;
 }
 
 /** Everything the composer can attach to a message: pool assets/templates plus
  * the five selection-mode reference types (item / timepoint / timerange
  * / canvas-region / transcript-selection). Discriminated on `kind`. */
-export type AgentReference = AssetReference | SelectionReference;
+export type AgentReference = AssetReference | DocumentReference | SelectionReference;
 
 export function isSelectionReference(ref: AgentReference): ref is SelectionReference {
   return isSelectionRefKind(ref.kind);
@@ -118,6 +134,14 @@ export function resolveAgentReferences(ctx: AgentContext, references: AgentRefer
     seen.add(reference.id);
     if (isSelectionReference(reference)) {
       entries.push(resolveSelectionReference(ctx, reference));
+    } else if (reference.kind === 'document') {
+      entries.push({
+        type: 'document',
+        id: reference.id,
+        name: reference.name,
+        mimeType: reference.mimeType,
+        text: reference.text,
+      });
     } else if (reference.kind === 'template') {
       const template = ctx.templates.find((item) => item.id === reference.id);
       if (template) entries.push({ type: 'template', id: template.id, name: template.name, category: template.category, width: template.width, height: template.height, durationInFrames: template.durationInFrames, propKeys: template.propSchema.map((prop) => prop.key) });

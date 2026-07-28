@@ -18,7 +18,7 @@ export const GENERATE_WORKFLOW = `
 - Always provide a short descriptive name. Default aspectRatio 16:9, imageSize 1K, quality high, and count 1 (imageSize/quality are gpt-image-2-oriented).
 - If the project is not 16:9, ask for the desired aspect ratio. Never upgrade to 2K/4K unless the user explicitly requests it.
 - Pass project image asset IDs through referenceAssetIds; never fetch reference bytes yourself.
-- Generated images are saved to the media pool. If the user says "media pool/library only" or asks not to change the timeline, set addToTimeline=false; otherwise propose timeline placement.
+- Generated images are saved to the media pool first for preview. Do not change the timeline by default; set addToTimeline=true only when the user explicitly asks to place the generated image on the active timeline.
 
 ## TTS voice generation
 - Use submit_voice only for an explicitly requested TTS generation after the user has confirmed a concrete provider and voiceId.
