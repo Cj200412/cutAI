@@ -55,6 +55,8 @@ export default {
   'E2B（新用户试用额度）': 'E2B (new-user trial credit)',
   'Firecrawl 云端 / 自托管': 'Firecrawl Cloud / Self-hosted',
   '本地模型': 'Local model',
+  '本地运行框架': 'Local runtime',
+  '所选模型缓存': 'Selected model cache',
   '推理设备': 'Inference device',
   '自动（优先 WebGPU）': 'Auto (prefer WebGPU)',
   'WebGPU（显卡）': 'WebGPU (GPU)',
@@ -80,6 +82,10 @@ export default {
   '接口格式': 'API format',
   'Responses API（推荐）': 'Responses API (recommended)',
   'Chat Completions API': 'Chat Completions API',
+  'Anthropic Messages': 'Anthropic Messages',
+  'Gemini 原生': 'Gemini native',
+  'OpenAI Responses / Chat Completions': 'OpenAI Responses / Chat Completions',
+  'OpenAI 兼容 · Chat Completions': 'OpenAI-compatible · Chat Completions',
   '模型厂商': 'Model provider',
   '模型': 'Model',
   'API Base URL': 'API Base URL',
@@ -136,6 +142,8 @@ export default {
   '可直接使用 Anthropic 官方 API Key；如使用兼容服务，再修改 Base URL 和模型。': 'Use an official Anthropic API key directly, or change the Base URL and model for a compatible service.',
   '默认使用 Claude Fable 5；自定义兼容地址时，也可填写该服务支持的模型 ID。': 'Claude Fable 5 is the default. With a compatible endpoint, enter any model ID supported by that service.',
   '每个厂商独立保存地址、密钥与模型。先测试连接，成功后可从接口返回的模型中选择。': 'Each provider keeps its own endpoint, key, and model. Test the connection, then choose from the models returned by that API.',
+  'CutAI 对本机 llm-proxy 使用 OpenAI 兼容的 Chat Completions 协议。地址可填 API 前缀，也可直接粘贴完整 /chat/completions 地址。':
+    'CutAI uses the OpenAI-compatible Chat Completions protocol with the local llm-proxy. Enter an API prefix or paste the complete /chat/completions URL.',
   '本地 Whisper 首次使用会下载模型并缓存在本机；自定义服务需兼容 OpenAI 音频转写接口。':
     'Local Whisper downloads and caches the model on first use. Custom services must support the OpenAI audio transcription API.',
   '音频与文字均不离开本机。首次转写会从 Hugging Face 下载所选 ONNX 模型；tiny 最省资源，base 更准，small 对硬件要求最高。':
@@ -147,6 +155,10 @@ export default {
   '测试连接后可选择接口返回的模型，也可直接填写服务支持的模型 ID。':
     'After testing, choose a model returned by the API or enter any model ID supported by the service.',
   '填写完整 API 前缀；可使用官方地址、自建网关或兼容中转。': 'Enter the complete API prefix. You can use the official endpoint, your own gateway, or a compatible relay.',
+  '填写完整 API 前缀；也可直接粘贴该协议的完整请求地址，CutAI 不会重复补齐操作路径。':
+    'Enter the complete API prefix, or paste the full request URL for this protocol. CutAI will not append the operation path twice.',
+  '支持 http://127.0.0.1:15722/v1，也支持完整 http://127.0.0.1:15722/v1/chat/completions；不会重复补齐路径。':
+    'Supports both http://127.0.0.1:15722/v1 and the complete http://127.0.0.1:15722/v1/chat/completions URL without duplicating the path.',
   '测试连接后可直接选择接口返回的模型，也可以手动填写模型 ID。': 'After testing, choose a returned model or enter a model ID manually.',
   '选择服务实际支持的协议；OpenAI 使用 Responses API，兼容服务使用 Chat Completions API。': 'Choose the protocol your service actually supports. OpenAI uses the Responses API; compatible services use Chat Completions.',
   '选择厂商后会自动使用官方 API 地址、接口格式和推荐模型，也可以在下方覆盖。': 'Choose a provider to use its official endpoint, protocol, and recommended model automatically, or override them below.',
@@ -187,6 +199,24 @@ export default {
   '测试请求失败 ({n})': 'Test request failed ({n})',
   '（按当前输入测试，记得保存）': ' (tested with current input — remember to save)',
   '发一条最小请求验证 Key 与地址可用': 'Sends one minimal request to verify the key and endpoint',
+  '检查运行框架': 'Check runtime',
+  '检查所选模型': 'Check selected model',
+  '检查中…': 'Checking…',
+  '删除本地模型': 'Delete local model',
+  '点击确认运行框架是否随应用安装，并查看体积。': 'Click to confirm that the runtime is bundled with the app and view its size.',
+  '已随应用安装 · {name} {version} · {size}': 'Installed with the app · {name} {version} · {size}',
+  '点击检查所选模型是否已下载，并读取预计下载大小。': 'Click to check whether the selected model is downloaded and load its estimated size.',
+  '大小暂时无法读取': 'size currently unavailable',
+  '预计 {size}': 'estimated {size}',
+  '已下载 · 本机缓存 {cached} · {expected}': 'Downloaded · local cache {cached} · {expected}',
+  '部分下载 · 本机缓存 {cached} · {expected}': 'Partially downloaded · local cache {cached} · {expected}',
+  '当前环境不支持浏览器模型缓存 · {expected}': 'Browser model caching is unavailable in this environment · {expected}',
+  '未下载 · {expected}': 'Not downloaded · {expected}',
+  '大小查询失败：{message}': 'Size lookup failed: {message}',
+  '确定删除所选模型 {model} 的本机缓存吗？下次使用会重新下载。':
+    'Delete the local cache for {model}? It will be downloaded again next time.',
+  '仅删除所选模型的 Transformers.js 缓存；运行框架随应用保留。':
+    'Only the selected model’s Transformers.js cache is deleted; the bundled runtime remains installed.',
   '本次设置': 'This session',
   '取消清除': 'Undo clear',
   '清除': 'Clear',

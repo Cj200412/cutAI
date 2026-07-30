@@ -46,6 +46,8 @@ export interface SettingsVendorPage {
   readonly key: string;
   readonly vendor: VendorId;
   readonly title: string;
+  /** Human-readable upstream wire protocol, shown beside the provider name. */
+  readonly protocolLabel?: string;
   /** 页级小注(渲染在字段卡顶部,如 MiniMax 共享 Key、ElevenLabs 兼音效) */
   readonly note?: string;
   readonly fields: readonly SettingsField[];
@@ -113,18 +115,31 @@ const routeSelect = (name: string, options: readonly SelectOption[]): SettingsFi
 
 const llmPage = (preset: (typeof LLM_PROVIDER_PRESETS)[number]): SettingsVendorPage => {
   const names = llmProviderConfigNames(preset.id);
+  const protocolLabel = preset.protocol === 'anthropic'
+    ? 'Anthropic Messages'
+    : preset.protocol === 'google'
+      ? 'Gemini 原生'
+      : preset.protocol === 'openai'
+        ? 'OpenAI Responses / Chat Completions'
+        : 'OpenAI 兼容 · Chat Completions';
+  const isLocalProxy = preset.id === 'llm-proxy';
   return {
     key: `llm/${preset.id}`,
     vendor: preset.id as VendorId,
     title: preset.label,
-    note: '每个厂商独立保存地址、密钥与模型。先测试连接，成功后可从接口返回的模型中选择。',
+    protocolLabel,
+    note: isLocalProxy
+      ? 'CutAI 对本机 llm-proxy 使用 OpenAI 兼容的 Chat Completions 协议。地址可填 API 前缀，也可直接粘贴完整 /chat/completions 地址。'
+      : '每个厂商独立保存地址、密钥与模型。先测试连接，成功后可从接口返回的模型中选择。',
     fields: [
       {
         name: names.baseUrl,
         label: 'API URL',
         kind: 'text',
         defaultLabel: preset.baseUrl,
-        note: '填写完整 API 前缀；可使用官方地址、自建网关或兼容中转。',
+        note: isLocalProxy
+          ? '支持 http://127.0.0.1:15722/v1，也支持完整 http://127.0.0.1:15722/v1/chat/completions；不会重复补齐路径。'
+          : '填写完整 API 前缀；也可直接粘贴该协议的完整请求地址，CutAI 不会重复补齐操作路径。',
       },
       secret(names.apiKey, 'API Key'),
       ...(preset.id === 'openai' ? [{

@@ -8,6 +8,7 @@ export const DEFAULT_LOCAL_TRANSCRIPTION_MODEL = LOCAL_TRANSCRIPTION_MODELS[0];
 export const DEFAULT_CUSTOM_TRANSCRIPTION_MODEL = 'whisper-1';
 
 export type TranscriptionProvider = 'assemblyai' | 'local' | 'custom';
+export type LocalTranscriptionModel = (typeof LOCAL_TRANSCRIPTION_MODELS)[number];
 export type LocalTranscriptionDevice = 'auto' | 'webgpu' | 'wasm';
 
 export function normalizeTranscriptionProvider(value: string | null | undefined): TranscriptionProvider {

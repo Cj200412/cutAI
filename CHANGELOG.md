@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added / 新增
 
+- Added explicit Agent-provider protocol labels, complete operation-URL support for compatible LLM endpoints, and Local Whisper asset management with click-to-check runtime/model sizes plus per-model cache deletion.
+  Agent 厂商页新增协议标注，兼容 LLM 地址可直接填写完整请求 URL；本地 Whisper 新增运行框架/模型大小检查与按模型删除缓存。
 - Added configurable OpenAI-compatible image and TTS endpoints, including optional authentication, custom model discovery, and local no-key services; generation vendors with provider-specific protocols now accept free-form compatible model IDs.
   新增 OpenAI 兼容的自定义生图与 TTS 接口，支持可选鉴权、模型读取和本地免 Key 服务；使用厂商专有协议的生成服务也可自由填写兼容网关模型 ID。
 - Added self-hosted Firecrawl support across web scraping and stock-search fallback, and clarified free-tier or trial options for stock media, local storage, Cloudflare R2, and E2B in Settings.

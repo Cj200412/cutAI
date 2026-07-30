@@ -3,6 +3,7 @@ import {
   llmProviderConfigNames,
   llmProviderPreset,
   normalizeLlmProvider,
+  protocolForProvider,
   providerApiPath,
   type LlmProvider,
 } from '../shared/llm-providers.ts';
@@ -24,18 +25,47 @@ export interface ResolvedLlmProviderConfig {
   readonly model: string;
 }
 
+function operationSuffixes(provider: LlmProvider): readonly string[] {
+  const protocol = protocolForProvider(provider);
+  if (protocol === 'anthropic') return ['/messages'];
+  if (protocol === 'openai') return ['/responses', '/chat/completions'];
+  if (protocol === 'openai-compatible') return ['/chat/completions'];
+  return [];
+}
+
+/**
+ * Accept either an AI SDK prefix or a complete operation URL. The SDK still
+ * appends its operation path, so a complete URL is reduced to the equivalent
+ * prefix once, preserving query parameters used by compatible gateways.
+ */
+export function normalizeLlmEndpointPrefix(providerValue: unknown, configuredValue: string): string {
+  const provider = normalizeServerLlmProvider(providerValue);
+  const tailIndex = configuredValue.search(/[?#]/);
+  const path = (tailIndex < 0 ? configuredValue : configuredValue.slice(0, tailIndex)).replace(/\/+$/, '');
+  const tail = tailIndex < 0 ? '' : configuredValue.slice(tailIndex);
+  const lower = path.toLowerCase();
+  for (const suffix of operationSuffixes(provider)) {
+    if (lower.endsWith(suffix)) return `${path.slice(0, -suffix.length).replace(/\/+$/, '')}${tail}`;
+  }
+  return `${path}${tail}`;
+}
+
 export function resolveLlmBaseUrl(
   providerValue: unknown,
   configuredValue: unknown,
   formatValue: unknown = AI_SDK_BASE_URL_FORMAT,
 ): string {
   const provider = normalizeServerLlmProvider(providerValue);
-  const configured = typeof configuredValue === 'string' ? configuredValue.trim().replace(/\/+$/, '') : '';
+  const configured = typeof configuredValue === 'string'
+    ? normalizeLlmEndpointPrefix(provider, configuredValue.trim())
+    : '';
   if (configured) {
     // Before the AI SDK migration the UI required a service root without /v1,
     // and the client always inserted /v1. An absent format marker identifies
     // that persisted convention even when the root contains a path.
-    if (formatValue !== AI_SDK_BASE_URL_FORMAT) {
+    if (formatValue !== AI_SDK_BASE_URL_FORMAT
+      && normalizeLlmEndpointPrefix(provider, String(configuredValue).trim())
+        === String(configuredValue).trim().replace(/\/+$/, '')) {
       return /\/v1$/i.test(configured) ? configured : `${configured}/v1`;
     }
     return configured;

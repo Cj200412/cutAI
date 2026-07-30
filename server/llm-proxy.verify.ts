@@ -4,6 +4,7 @@ import { createMiniConnect } from '../desktop/mini-connect.ts';
 import {
   expandLlmProviderPatch,
   llmOperationPath,
+  normalizeLlmEndpointPrefix,
   resolveLlmBaseUrl,
 } from './llm-config.ts';
 import { proxyMiddleware } from './proxy.ts';
@@ -31,6 +32,20 @@ assert.equal(resolveLlmBaseUrl('minimax', ''), 'https://api.minimaxi.com/v1');
 assert.equal(resolveLlmBaseUrl('gemini', ''), 'https://generativelanguage.googleapis.com/v1beta');
 assert.equal(resolveLlmBaseUrl('openai', 'https://api.openai.com', ''), 'https://api.openai.com/v1');
 assert.equal(resolveLlmBaseUrl('anthropic', 'https://relay.test/api', ''), 'https://relay.test/api/v1');
+assert.equal(
+  resolveLlmBaseUrl('llm-proxy', 'http://127.0.0.1:15722/v1/chat/completions'),
+  'http://127.0.0.1:15722/v1',
+  'complete Chat Completions URL is not appended twice',
+);
+assert.equal(
+  resolveLlmBaseUrl('openai', 'https://relay.test/v1/responses?api-version=2026-01-01'),
+  'https://relay.test/v1?api-version=2026-01-01',
+  'complete Responses URL keeps gateway query parameters',
+);
+assert.equal(
+  normalizeLlmEndpointPrefix('anthropic', 'https://relay.test/v1/messages/'),
+  'https://relay.test/v1',
+);
 assert.equal(llmOperationPath('kimi'), '/chat/completions');
 
 // ── llmHeaders:按协议注入上游鉴权(google=x-goog-api-key;anthropic=x-api-key;其余 Bearer) ──
@@ -82,7 +97,10 @@ const upstream = createServer(async (req, res) => {
 });
 const upstreamPort = await listen(upstream);
 
-let target = `http://127.0.0.1:${upstreamPort}/v1beta/openai?api-version=preview`;
+let target = resolveLlmBaseUrl(
+  'llm-proxy',
+  `http://127.0.0.1:${upstreamPort}/v1beta/openai/chat/completions?api-version=preview`,
+);
 const app = createMiniConnect((error) => { throw error; });
 app.use('/llm', proxyMiddleware({
   target: () => target,

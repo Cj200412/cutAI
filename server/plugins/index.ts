@@ -32,10 +32,11 @@ import { settingsPlugin } from './settings.ts';
 import { externalAgentPlugin } from './external-agent.ts';
 import { llmProxyPlugin } from './llm-proxy.ts';
 import { transcriptionCompatiblePlugin } from './transcription-compatible.ts';
+import { localModelAssetsPlugin } from './local-model-assets.ts';
 import { getKey } from '../keystore.ts';
 
 export function serverPlugins(): Plugin[] {
-  return [llmProxyPlugin(), transcriptionCompatiblePlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
+  return [llmProxyPlugin(), transcriptionCompatiblePlugin(), localModelAssetsPlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
     get baseUrl() { return getKey('IMAGE_BASE_URL') || 'https://api.openai.com'; },
     get apiKey() { return getKey('IMAGE_API_KEY') || getKey('OPENAI_API_KEY'); },
     get model() { return getKey('IMAGE_MODEL') || 'gpt-image-2'; },

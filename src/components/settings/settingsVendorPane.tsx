@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { theme, themeAlpha } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { VendorIcon } from './vendorIcons';
+import { LocalTranscriptionAssets } from './LocalTranscriptionAssets';
 import {
   fieldPlaceholder, isModelField, modelValue, selectOptionLabel, selectOptions, vendorConfigured,
   type KeyStatusResponse, type SettingsField, type SettingsVendorPage, type StagedValues as Values,
@@ -38,6 +39,7 @@ export function VendorPane({ page, hint, ctx }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <VendorIcon vendor={page.vendor} size={18} />
           <b style={{ fontSize: 13 }}>{t(page.title)}</b>
+          {page.protocolLabel && <span style={protocolTag}>{t(page.protocolLabel)}</span>}
           <span style={{ fontSize: 11, color: on ? ON : theme.textDim }}>{on ? t('已配置') : t('未配置')}</span>
         </div>
         <div style={{ fontSize: 11.5, color: theme.textDim, marginTop: 3, paddingLeft: 26 }}>{t(hint)}</div>
@@ -48,6 +50,7 @@ export function VendorPane({ page, hint, ctx }: {
           {page.fields.map((f) => <FieldRow key={f.name} field={f} ctx={ctx} />)}
         </div>
       </section>
+      {page.key === 'transcription/local' && <LocalTranscriptionAssets ctx={ctx} />}
       <TestConnectionRow page={page} ctx={ctx} />
     </div>
   );
@@ -328,6 +331,14 @@ const input: React.CSSProperties = {
 };
 const select: React.CSSProperties = { ...input, cursor: 'pointer', colorScheme: 'var(--cc-color-scheme)' };
 const sourceTag: React.CSSProperties = { fontSize: 10, color: theme.textDim, border: `0.5px solid ${theme.border}`, borderRadius: 4, padding: '0 5px' };
+const protocolTag: React.CSSProperties = {
+  fontSize: 9.5,
+  color: theme.accent,
+  border: `0.5px solid ${theme.border}`,
+  borderRadius: 999,
+  padding: '1px 6px',
+  whiteSpace: 'nowrap',
+};
 const clearBtn: React.CSSProperties = {
   font: 'inherit', fontSize: 10.5, background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flex: '0 0 auto', textDecoration: 'underline',
 };
