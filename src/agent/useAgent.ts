@@ -33,6 +33,8 @@ export interface DisplayMessage {
   thinkingElapsedMs?: number;
   thinkingStartedAt?: number;
   thinkingActive?: boolean;
+  actualModel?: string;
+  requestedModel?: string;
   tool?: { name: string; args: unknown; result: unknown };
 }
 

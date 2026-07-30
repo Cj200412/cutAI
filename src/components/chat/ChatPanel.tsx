@@ -173,6 +173,12 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
             && !message.thinking.includes('正在建立原生流式会话')
             ? message.thinking : ''}${event.delta}`,
         }));
+      } else if (event.type === 'model') {
+        updateAssistant((message) => ({
+          ...message,
+          actualModel: event.model,
+          requestedModel: event.requestedModel,
+        }));
       } else if (event.type === 'text') {
         pauseThinking();
         updateAssistant((message) => ({ ...message, text: `${message.text}${event.delta}` }));
@@ -319,6 +325,7 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
           const assistant = next[assistantIndex];
           next[assistantIndex] = {
             ...assistant,
+            ...(result.actualModel ? { actualModel: result.actualModel, requestedModel: model } : {}),
             text: assistant.text || result.text || t('CLI 已完成，但没有返回文本。'),
             thinking: assistant.thinking?.includes('等待结构化事件') ? result.reasoning : assistant.thinking || result.reasoning,
           };

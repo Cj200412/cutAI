@@ -156,6 +156,11 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
         elapsedMs={msg.thinkingElapsedMs}
         startedAt={msg.thinkingStartedAt}
       />}
+      {msg.actualModel && (
+        <div style={{ marginBottom: 6, color: theme.textDim, fontSize: 10.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          实际模型：{msg.actualModel}{msg.requestedModel ? ` · 选择：${msg.requestedModel}` : ''}
+        </div>
+      )}
       {segments.map((seg, i) =>
         seg.type === 'widget' ? (
           <WidgetCard

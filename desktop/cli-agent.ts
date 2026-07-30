@@ -13,6 +13,7 @@ export type CliStreamPayload =
   | { type: 'status'; message: string }
   | { type: 'thinking'; delta: string }
   | { type: 'text'; delta: string }
+  | { type: 'model'; model: string; requestedModel?: string }
   | { type: 'tool-start'; toolId?: string; name: string; args?: unknown }
   | { type: 'tool-result'; toolId?: string; name: string; result?: unknown }
   | { type: 'error'; message: string };

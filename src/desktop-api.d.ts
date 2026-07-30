@@ -82,6 +82,7 @@ declare global {
     | { runId: string; type: 'status'; message: string }
     | { runId: string; type: 'thinking'; delta: string }
     | { runId: string; type: 'text'; delta: string }
+    | { runId: string; type: 'model'; model: string; requestedModel?: string }
     | { runId: string; type: 'tool-start'; toolId?: string; name: string; args?: unknown }
     | { runId: string; type: 'tool-result'; toolId?: string; name: string; result?: unknown }
     | { runId: string; type: 'error'; message: string };

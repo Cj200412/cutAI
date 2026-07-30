@@ -17,30 +17,26 @@ if (!profile.authorizedRoots.includes(root)) {
   await host.authorize(profile.id, root, profile.fingerprint);
 }
 
-const first = await host.run({
-  profileId: profile.id,
-  projectId,
-  projectRoot: root,
-  prompt: 'Reply with exactly FIRST_OK and do not use tools.',
-  model: 'haiku',
-  fileAccess: 'proposal-only',
-});
-assert.equal(first.text.includes('FIRST_OK'), true);
-assert.ok(first.sessionId);
-assert.ok(first.actualModel);
+const aliases = ['haiku', 'opus', 'fable', 'sonnet'].filter((id) => profile.models.some((model) => model.id === id));
+assert.ok(aliases.length >= 2, 'at least two Claude model aliases are required');
+let sessionId: string | undefined;
+const actualModels: string[] = [];
+for (const [index, model] of aliases.entries()) {
+  const result = await host.run({
+    profileId: profile.id,
+    projectId,
+    projectRoot: root,
+    prompt: `Reply with exactly MODEL_SWITCH_${index + 1}_OK and do not use tools.`,
+    ...(sessionId ? { sessionId } : {}),
+    model,
+    fileAccess: 'proposal-only',
+  });
+  assert.equal(result.text.includes(`MODEL_SWITCH_${index + 1}_OK`), true);
+  if (sessionId) assert.equal(result.sessionId, sessionId, 'model switch must preserve the Claude session');
+  sessionId = result.sessionId;
+  assert.ok(result.actualModel);
+  actualModels.push(result.actualModel);
+}
+assert.equal(new Set(actualModels).size, aliases.length, 'every configured alias must select a distinct actual model');
 
-const second = await host.run({
-  profileId: profile.id,
-  projectId,
-  projectRoot: root,
-  prompt: 'Reply with exactly SECOND_OK and do not use tools.',
-  sessionId: first.sessionId,
-  model: 'sonnet',
-  fileAccess: 'proposal-only',
-});
-assert.equal(second.text.includes('SECOND_OK'), true);
-assert.equal(second.sessionId, first.sessionId, 'model switch must preserve the Claude session');
-assert.ok(second.actualModel);
-assert.notEqual(second.actualModel, first.actualModel, 'actual Claude model must change');
-
-console.log(`claude-sdk-model-switch.live.verify: ok (${first.actualModel} -> ${second.actualModel}, session ${first.sessionId})`);
+console.log(`claude-sdk-model-switch.live.verify: ok (${aliases.map((alias, index) => `${alias}=${actualModels[index]}`).join(', ')}, session ${sessionId})`);

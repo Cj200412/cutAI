@@ -233,7 +233,7 @@ export async function runClaudeSdk(
       sessionId = message.session_id || sessionId;
       if (message.type === 'system' && message.subtype === 'init') {
         actualModel = message.model;
-        emit({ type: 'status', message: `${profile.name} 实际模型：${message.model}` });
+        emit({ type: 'model', model: message.model, ...(request.model ? { requestedModel: request.model } : {}) });
       }
       if (message.type === 'stream_event') {
         if (message.parent_tool_use_id) continue;
