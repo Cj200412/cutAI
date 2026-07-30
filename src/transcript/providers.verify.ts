@@ -25,8 +25,10 @@ assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:
   });
   assert.equal(result.text, '你好世界');
   assert.deepEqual(result.words.map(({ text, start, end, speaker }) => ({ text, start, end, speaker })), [
-    { text: '你好', start: 100, end: 700, speaker: null },
-    { text: '世界', start: 700, end: 1400, speaker: null },
+    { text: '你', start: 100, end: 400, speaker: null },
+    { text: '好', start: 400, end: 700, speaker: null },
+    { text: '世', start: 700, end: 1050, speaker: null },
+    { text: '界', start: 1050, end: 1400, speaker: null },
   ]);
 }
 

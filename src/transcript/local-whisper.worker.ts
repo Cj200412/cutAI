@@ -62,16 +62,25 @@ async function run(request: TranscribeRequest): Promise<void> {
   const output = await pipe(request.audio, {
     language: 'chinese',
     task: 'transcribe',
-    return_timestamps: 'word',
+    // ONNX Whisper exports reliably expose segment timestamps. Word timestamps
+    // require cross-attention outputs that are absent from common quantized
+    // browser builds, so the main thread expands segments into editable tokens.
+    return_timestamps: true,
     chunk_length_s: 30,
     stride_length_s: 5,
   });
+  const durationSeconds = request.audio.length / 16_000;
   scope.postMessage({
     id: request.id,
     type: 'result',
     result: {
       text: output.text ?? '',
-      chunks: output.chunks ?? [],
+      chunks: (output.chunks ?? []).map((chunk) => ({
+        ...chunk,
+        timestamp: chunk.timestamp
+          ? [chunk.timestamp[0] ?? 0, chunk.timestamp[1] ?? durationSeconds]
+          : chunk.timestamp,
+      })),
     },
   });
 }

@@ -44,15 +44,31 @@ function transcriptWorker(): Worker {
   return worker;
 }
 
+function textTokens(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (/\s/.test(trimmed)) return trimmed.split(/\s+/).filter(Boolean);
+  return Array.from(trimmed);
+}
+
 export function localWhisperResult(result: WorkerResult): TranscriptResult {
   const words = result.chunks.flatMap((chunk) => {
     const text = (chunk.text ?? '').trim();
     const start = chunk.timestamp?.[0];
     const end = chunk.timestamp?.[1];
     if (!text || typeof start !== 'number' || typeof end !== 'number') return [];
-    return [{ text, start: Math.max(0, Math.round(start * 1000)), end: Math.max(0, Math.round(end * 1000)), speaker: null }];
+    const startMs = Math.max(0, Math.round(start * 1000));
+    const endMs = Math.max(startMs, Math.round(end * 1000));
+    const tokens = textTokens(text);
+    const span = Math.max(tokens.length, endMs - startMs);
+    return tokens.map((token, index) => ({
+      text: token,
+      start: Math.round(startMs + span * index / tokens.length),
+      end: Math.round(startMs + span * (index + 1) / tokens.length),
+      speaker: null,
+    }));
   });
-  if (!words.length) throw new Error('本地模型没有返回词级时间戳，请更换 Whisper 模型后重试');
+  if (!words.length) throw new Error('本地模型没有返回分段时间戳，请更换 Whisper 模型后重试');
   return { text: result.text || words.map((word) => word.text).join(''), words, utterances: [] };
 }
 
