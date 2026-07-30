@@ -91,6 +91,7 @@ export interface CliRunResult {
   usage?: Record<string, unknown>;
   exitCode: number;
   stderrTail: string;
+  actualModel?: string;
 }
 
 const api: CutaiDesktopApi = {

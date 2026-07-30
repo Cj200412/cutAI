@@ -194,6 +194,7 @@ export async function runClaudeSdk(
   let streamedThinking = false;
   let sessionId = request.sessionId;
   let usage: Record<string, unknown> | undefined;
+  let actualModel: string | undefined;
   emit({ type: 'status', message: `${profile.name} Agent SDK 已启动，正在建立原生流式会话…` });
   const batcher = new StreamEventBatcher(emit);
   const promptText = `${claudeInstruction(request)}${visualEvidence ? `\n\nA local source preview was extracted for visual inspection at ${visualEvidence}. Read that image before making visual claims.` : ''}`;
@@ -230,6 +231,10 @@ export async function runClaudeSdk(
   try {
     for await (const message of stream) {
       sessionId = message.session_id || sessionId;
+      if (message.type === 'system' && message.subtype === 'init') {
+        actualModel = message.model;
+        emit({ type: 'status', message: `${profile.name} 实际模型：${message.model}` });
+      }
       if (message.type === 'stream_event') {
         if (message.parent_tool_use_id) continue;
         const event = record(message.event);
@@ -301,5 +306,6 @@ export async function runClaudeSdk(
     usage,
     exitCode: 0,
     stderrTail: '',
+    actualModel,
   };
 }

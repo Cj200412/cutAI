@@ -15,6 +15,7 @@ import { ProposalCard } from './ProposalCard';
 import { ChatMessage } from './ChatMessage';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupMessages } from './message-groups';
+import { pauseThinkingClock, startThinkingClock } from './thinking-clock';
 import { ChatComposer, type ChatMode, type RefItem } from './ChatComposer';
 import { loadAgentSettings } from '../../agent/settings/agentSettings';
 import { BrandMark, CutaiWordmark, Icon } from '../icons';
@@ -150,6 +151,12 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
           : next.length - 1;
         next[assistantIndex] = patch(next[assistantIndex]);
       };
+      const pauseThinking = (): void => {
+        const assistantIndex = next.findLastIndex((message) => message.role === 'assistant' && message.thinkingActive);
+        if (assistantIndex < 0) return;
+        const message = next[assistantIndex];
+        next[assistantIndex] = pauseThinkingClock(message);
+      };
       if (event.type === 'status') {
         updateAssistant((message) => {
           const lifecyclePlaceholder = !message.thinking
@@ -160,21 +167,24 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         });
       } else if (event.type === 'thinking') {
         updateAssistant((message) => ({
-          ...message,
+          ...startThinkingClock(message),
           thinking: `${message.thinking
             && !message.thinking.includes('等待结构化事件')
             && !message.thinking.includes('正在建立原生流式会话')
             ? message.thinking : ''}${event.delta}`,
         }));
       } else if (event.type === 'text') {
+        pauseThinking();
         updateAssistant((message) => ({ ...message, text: `${message.text}${event.delta}` }));
       } else if (event.type === 'tool-start') {
+        pauseThinking();
         next.push({
           role: 'tool',
           text: '',
           tool: { name: event.name, args: event.args ?? {}, result: { status: 'running', toolId: event.toolId } },
         });
       } else if (event.type === 'tool-result') {
+        pauseThinking();
         const toolIndex = next.findLastIndex((message) => message.role === 'tool'
           && message.tool?.result && typeof message.tool.result === 'object'
           && (message.tool.result as { toolId?: string }).toolId === event.toolId);
@@ -261,7 +271,8 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
       const sessionModelKey = `cutai:cli-session-model:${projectId}:${liveProfile.id}`;
       const sessionModel = localStorage.getItem(sessionModelKey);
       const modelChanged = Boolean(cliSessionId && sessionModel && sessionModel !== model);
-      const conversationBridge = modelChanged
+      const canSwitchModelInSession = liveProfile.kind === 'claude';
+      const conversationBridge = modelChanged && !canSwitchModelInSession
         ? cliMessages
           .filter((message) => message.role === 'user' || message.role === 'assistant')
           .slice(-12)
@@ -285,10 +296,9 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         projectId,
         projectRoot,
         prompt: effectivePrompt,
-        // Claude/Codex keep the model on a resumed native thread. Start a new
-        // thread when the user changes model; otherwise the UI selection is
-        // silently ignored by the provider.
-        ...(cliSessionId && sessionModel === model ? { sessionId: cliSessionId } : {}),
+        // Claude Agent SDK accepts a model override while resuming the same
+        // session. Codex threads remain model-bound and use the context bridge.
+        ...(cliSessionId && (sessionModel === model || canSwitchModelInSession) ? { sessionId: cliSessionId } : {}),
         ...(model ? { model } : {}),
         ...(reasoningEffort ? { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
         fileAccess,
@@ -300,7 +310,8 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
       setCliSessionId(result.sessionId);
       if (model) localStorage.setItem(sessionModelKey, model);
       setCliMessages((current) => {
-        const next = [...current];
+        const finishedAt = Date.now();
+        const next = current.map((message) => pauseThinkingClock(message, finishedAt));
         const assistantIndex = next.findLastIndex((message) => message.role === 'assistant');
         if (assistantIndex < 0) {
           next.push({ role: 'assistant', text: result.text || t('CLI 已完成，但没有返回文本。'), ...(result.reasoning ? { thinking: result.reasoning } : {}) });
@@ -315,10 +326,13 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         return next;
       });
     } catch (error) {
-      setCliMessages((current) => [...current, {
-        role: 'error',
-        text: error instanceof Error ? error.message : String(error),
-      }]);
+      setCliMessages((current) => {
+        const finishedAt = Date.now();
+        return [...current.map((message) => pauseThinkingClock(message, finishedAt)), {
+          role: 'error' as const,
+          text: error instanceof Error ? error.message : String(error),
+        }];
+      });
     } finally {
       cliRunIdRef.current = null;
       setCliRunId(null);

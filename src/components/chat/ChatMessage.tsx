@@ -10,15 +10,16 @@ import { hasToolResultError } from './tool-result';
 
 const GREEN = theme.success;
 
-function ThinkingElapsed({ active }: { active: boolean }) {
-  const started = useState(() => performance.now())[0];
-  const [now, setNow] = useState(() => performance.now());
+function ThinkingElapsed({ active, elapsedMs = 0, startedAt }: { active: boolean; elapsedMs?: number; startedAt?: number }) {
+  const [fallbackStartedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
-    const id = window.setInterval(() => setNow(performance.now()), 100);
+    const id = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(id);
   }, [active]);
-  return <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', opacity: 0.65 }}>{((now - started) / 1000).toFixed(1)}s</span>;
+  const liveMs = active ? Math.max(0, now - (startedAt ?? fallbackStartedAt)) : 0;
+  return <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', opacity: 0.65 }}>{((elapsedMs + liveMs) / 1000).toFixed(1)}s</span>;
 }
 
 // 从工具参数里取「最有区分度」的那一个做行内摘要——按识别性排序:先具体标识
@@ -45,7 +46,7 @@ function toolPreview(value: unknown): string {
 
 // 折叠的「思考过程」块 — 原生 thinking 流与内联 <thinking> 抽取都归到这里
 // (两者统一折成 thinking 块,默认折叠)。
-function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
+function ThinkingBlock({ text, active, elapsedMs, startedAt }: { text: string; active: boolean; elapsedMs?: number; startedAt?: number }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
@@ -53,7 +54,7 @@ function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
       <button onClick={() => setOpen((v) => !v)} title={open ? t('收起思考过程') : t('展开思考过程')}
         style={{ background: 'none', border: 'none', cursor: 'pointer', color: theme.textDim, fontSize: 11.5, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ display: 'inline-flex', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
-        {t('思考过程')}<ThinkingElapsed active={active} />
+        {t('思考过程')}<ThinkingElapsed active={active} elapsedMs={elapsedMs} startedAt={startedAt} />
       </button>
       {open && (
         <Markdown text={text} style={{ marginTop: 4, maxHeight: 180, overflowY: 'auto', padding: '6px 8px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontStyle: 'italic', fontSize: 11.5, lineHeight: 1.55, color: theme.textDim, whiteSpace: 'pre-wrap', background: theme.panelAlt, border: `0.5px solid ${theme.border}`, borderRadius: 4 }} />
@@ -149,7 +150,12 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
   const segments = parseWidgets(msg.text);
   return (
     <div style={{ margin: '16px 0' }}>
-      {!!msg.thinking?.trim() && <ThinkingBlock text={msg.thinking} active={!!streaming} />}
+      {!!msg.thinking?.trim() && <ThinkingBlock
+        text={msg.thinking}
+        active={msg.thinkingActive ?? (!!streaming && !!msg.thinking && !msg.text)}
+        elapsedMs={msg.thinkingElapsedMs}
+        startedAt={msg.thinkingStartedAt}
+      />}
       {segments.map((seg, i) =>
         seg.type === 'widget' ? (
           <WidgetCard

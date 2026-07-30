@@ -23,6 +23,8 @@
     "verify:cli-agent:live": "tsx desktop/cli-agent.live.verify.ts",
     "verify:claude-sdk-project:live": "tsx desktop/claude-sdk-project.live.verify.ts",
     "verify:claude-sdk-plan:live": "tsx desktop/claude-sdk-plan.live.verify.ts",
+    "verify:claude-sdk-model-switch:live": "tsx desktop/claude-sdk-model-switch.live.verify.ts",
+    "verify:thinking-clock": "tsx src/components/chat/thinking-clock.verify.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "desktop:build:main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --packages=external --outfile=desktop-dist/main.mjs && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --packages=external --outfile=desktop-dist/preload.cjs",

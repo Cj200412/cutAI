@@ -94,5 +94,6 @@ declare global {
     usage?: Record<string, unknown>;
     exitCode: number;
     stderrTail: string;
+    actualModel?: string;
   }
 }

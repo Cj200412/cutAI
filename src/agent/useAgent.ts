@@ -29,6 +29,10 @@ export interface DisplayMessage {
   text: string;
   /** 推理流(原生 thinking_delta 或内联 <thinking> 抽取),渲染为折叠的「思考过程」块 */
   thinking?: string;
+  /** CLI thinking clock is driven by stream events, not component mount time. */
+  thinkingElapsedMs?: number;
+  thinkingStartedAt?: number;
+  thinkingActive?: boolean;
   tool?: { name: string; args: unknown; result: unknown };
 }
 
