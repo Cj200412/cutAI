@@ -14,6 +14,7 @@ import {
   llmProviderConfigNames,
   normalizeLlmProvider,
 } from '../shared/llm-providers.ts';
+import { normalizeTranscriptionProvider } from '../shared/transcription-providers.ts';
 
 const ENV_PATH = resolve(process.cwd(), '.env.local');
 
@@ -42,6 +43,7 @@ export const KEY_NAMES = [
   'MINIMAX_API_KEY', 'MINIMAX_BASE_URL',
   'PEXELS_API_KEY', 'PIXABAY_API_KEY', 'UNSPLASH_ACCESS_KEY', 'FREESOUND_API_KEY',
   'ASSEMBLYAI_API_KEY',
+  'TRANSCRIPTION_CUSTOM_API_KEY', 'TRANSCRIPTION_CUSTOM_BASE_URL',
   'E2B_API_KEY', 'E2B_TEMPLATE',
   'FIRECRAWL_API_KEY',
   'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_ENABLED', 'R2_PRESIGN',
@@ -53,9 +55,10 @@ export const KEY_NAMES = [
   'ELEVENLABS_SOUND_MODEL',
   'SEEDANCE_VIDEO_MODEL', 'KLING_VIDEO_MODEL', 'MINIMAX_VIDEO_MODEL',
   'MUREKA_MUSIC_MODEL', 'MINIMAX_MUSIC_MODEL',
+  'TRANSCRIPTION_LOCAL_MODEL', 'TRANSCRIPTION_LOCAL_DEVICE', 'TRANSCRIPTION_CUSTOM_MODEL',
   // ── vendor routing (non-secret config) ──
   'PREFERRED_IMAGE_VENDOR', 'PREFERRED_VOICE_VENDOR',
-  'PREFERRED_VIDEO_VENDOR', 'PREFERRED_MUSIC_VENDOR',
+  'PREFERRED_VIDEO_VENDOR', 'PREFERRED_MUSIC_VENDOR', 'PREFERRED_TRANSCRIPTION_VENDOR',
 ] as const;
 export type KeyName = (typeof KEY_NAMES)[number];
 const SETTABLE = new Set<string>(KEY_NAMES);
@@ -68,7 +71,9 @@ export const NON_SECRET_NAMES: ReadonlySet<string> = new Set([
   'GEMINI_IMAGE_MODEL', 'ELEVENLABS_TTS_MODEL', 'ELEVENLABS_SOUND_MODEL',
   'DOUBAO_TTS_RESOURCE_ID', 'SEEDANCE_VIDEO_MODEL', 'KLING_VIDEO_MODEL', 'MUREKA_MUSIC_MODEL',
   'MINIMAX_TTS_MODEL', 'MINIMAX_VIDEO_MODEL', 'MINIMAX_MUSIC_MODEL', 'MINIMAX_IMAGE_MODEL',
+  'TRANSCRIPTION_LOCAL_MODEL', 'TRANSCRIPTION_LOCAL_DEVICE', 'TRANSCRIPTION_CUSTOM_BASE_URL', 'TRANSCRIPTION_CUSTOM_MODEL',
   'PREFERRED_IMAGE_VENDOR', 'PREFERRED_VOICE_VENDOR', 'PREFERRED_VIDEO_VENDOR', 'PREFERRED_MUSIC_VENDOR',
+  'PREFERRED_TRANSCRIPTION_VENDOR',
   'R2_ENABLED', // 云同步开关('' 缺省=启用,'0'=停用)——配置不是凭据
   'R2_PRESIGN', // 浏览器预签名直传('' 缺省=启用,'0'=仅服务端写穿)
   'MEDIA_DIR',  // 素材保存目录(本机路径,''=默认 public/media/uploads)——配置不是凭据
@@ -137,6 +142,7 @@ export interface Caps {
 }
 export function computeCaps(): Caps {
   const has = (n: KeyName): boolean => getKey(n).length > 0;
+  const transcriptionProvider = normalizeTranscriptionProvider(getKey('PREFERRED_TRANSCRIPTION_VENDOR'));
   return {
     image: has('IMAGE_API_KEY') || has('OPENAI_API_KEY') || has('GEMINI_API_KEY') || has('MINIMAX_API_KEY'),
     voice: (has('DOUBAO_TTS_APP_ID') && has('DOUBAO_TTS_ACCESS_KEY')) || has('ELEVENLABS_API_KEY') || has('MINIMAX_API_KEY'),
@@ -145,7 +151,9 @@ export function computeCaps(): Caps {
     sound: has('ELEVENLABS_API_KEY'),
     stock: has('PEXELS_API_KEY') || has('PIXABAY_API_KEY') || has('UNSPLASH_ACCESS_KEY')
       || has('FREESOUND_API_KEY') || has('FIRECRAWL_API_KEY'),
-    transcription: has('ASSEMBLYAI_API_KEY'),
+    transcription: transcriptionProvider === 'local'
+      || (transcriptionProvider === 'assemblyai' && has('ASSEMBLYAI_API_KEY'))
+      || (transcriptionProvider === 'custom' && has('TRANSCRIPTION_CUSTOM_BASE_URL')),
     sandbox: has('E2B_API_KEY'),
     web: has('FIRECRAWL_API_KEY'),
     storage: has('R2_ACCOUNT_ID') && has('R2_ACCESS_KEY_ID') && has('R2_SECRET_ACCESS_KEY') && has('R2_BUCKET')

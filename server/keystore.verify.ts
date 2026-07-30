@@ -77,7 +77,9 @@ const MODEL_ROUTING_NAMES = [
   'GEMINI_IMAGE_MODEL', 'ELEVENLABS_TTS_MODEL', 'ELEVENLABS_SOUND_MODEL',
   'DOUBAO_TTS_RESOURCE_ID', 'SEEDANCE_VIDEO_MODEL', 'KLING_VIDEO_MODEL', 'MUREKA_MUSIC_MODEL',
   'MINIMAX_TTS_MODEL', 'MINIMAX_VIDEO_MODEL', 'MINIMAX_MUSIC_MODEL', 'MINIMAX_IMAGE_MODEL',
+  'TRANSCRIPTION_LOCAL_MODEL', 'TRANSCRIPTION_LOCAL_DEVICE', 'TRANSCRIPTION_CUSTOM_BASE_URL', 'TRANSCRIPTION_CUSTOM_MODEL',
   'PREFERRED_IMAGE_VENDOR', 'PREFERRED_VOICE_VENDOR', 'PREFERRED_VIDEO_VENDOR', 'PREFERRED_MUSIC_VENDOR',
+  'PREFERRED_TRANSCRIPTION_VENDOR',
   'R2_ENABLED', // 云同步开关(''=启用/'0'=停用)
   'R2_PRESIGN', // 浏览器预签名直传(''=启用/'0'=仅服务端写穿)
   'MEDIA_DIR',  // 素材保存目录(''=默认 public/media/uploads)
@@ -109,5 +111,19 @@ assert.equal(st2.models['KLING_VIDEO_MODEL'], '', 'unset non-secret name echoes 
 assert.ok(!('LLM_API_KEY' in st2.models), 'SECRET key has no field in models at all');
 assert.equal(st2.keys.LLM_API_KEY.configured, true, 'SECRET key still reported as configured boolean');
 assert.ok(!JSON.stringify(st2).includes('sec-x'), 'SECRET value appears NOWHERE in the serialized status');
+
+// ── transcription backend: local is usable without a cloud key and its selection/model
+// are non-secret; a custom API key remains secret. ──
+seedKeystore({
+  PREFERRED_TRANSCRIPTION_VENDOR: 'local',
+  TRANSCRIPTION_LOCAL_MODEL: 'onnx-community/whisper-base',
+  TRANSCRIPTION_CUSTOM_API_KEY: 'custom-secret',
+} as Record<string, string>);
+const st3 = keyStatus();
+assert.equal(st3.caps.transcription, true, 'local Whisper selection enables transcription without AssemblyAI');
+assert.equal(st3.models.PREFERRED_TRANSCRIPTION_VENDOR, 'local');
+assert.equal(st3.models.TRANSCRIPTION_LOCAL_MODEL, 'onnx-community/whisper-base');
+assert.ok(!('TRANSCRIPTION_CUSTOM_API_KEY' in st3.models), 'custom transcription key stays secret');
+assert.ok(!JSON.stringify(st3).includes('custom-secret'), 'custom transcription key never leaks');
 
 console.log('keystore.verify: ok');

@@ -7,7 +7,9 @@ function transcriptErrorMessage(error: unknown): string {
   if (error instanceof TranscriptionError) {
     return error.code === 'source-unavailable'
       ? t('素材文件不可用，请在“我的素材”中重新链接后再转写')
-      : t('无法连接转写服务，请检查网络和 AssemblyAI 配置后重试');
+      : error.code === 'configuration-required'
+        ? t('当前转写后端尚未配置。请打开“设置 → 素材 · 转写 → 转写 / 口播剪辑”，选择并测试一个可用后端。')
+      : t('无法连接转写服务，请检查网络和当前转写后端配置后重试');
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -37,7 +39,7 @@ export function useTranscript() {
     setError(null);
     setResult(null);
     setActiveItemId(opts?.itemId ?? null);
-    setProgressNote(opts?.label ? t('上传 {label}…', { label: opts.label }) : t('上传音频…'));
+    setProgressNote(opts?.label ? t('准备 {label}…', { label: opts.label }) : t('准备音频…'));
     try {
       const r = await transcribePath(
         path,
@@ -77,7 +79,7 @@ export function useTranscript() {
       const job = jobs[i]!;
       setActiveItemId(job.itemId);
       setStatus('uploading');
-      setProgressNote(t('({i}/{total}) 上传 {label}…', { i: i + 1, total: jobs.length, label: job.label }));
+      setProgressNote(t('({i}/{total}) 准备 {label}…', { i: i + 1, total: jobs.length, label: job.label }));
       try {
         const r = await transcribePath(
           job.path,

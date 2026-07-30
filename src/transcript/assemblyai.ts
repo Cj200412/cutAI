@@ -7,6 +7,15 @@
 // not get re-fetched + re-uploaded whole. Falls back to the original path.
 import type { TranscriptResult } from './types';
 import { getMediaBlob } from '../persist/mediaBlobStore';
+import {
+  DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
+  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+  normalizeLocalTranscriptionDevice,
+  normalizeTranscriptionProvider,
+  type TranscriptionProvider,
+} from '../../shared/transcription-providers';
+import { transcribeLocalBlob } from './local-whisper';
+import { transcribeCompatibleBlob } from './openai-compatible';
 
 const BASE = '/assemblyai/v2';
 
@@ -17,11 +26,11 @@ const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg|flac|opus)$/i;
 const LARGE_AUDIO_BYTES = 40 * 1024 * 1024;
 
 export class TranscriptionError extends Error {
-  readonly code: 'source-unavailable' | 'service-unavailable';
+  readonly code: 'source-unavailable' | 'service-unavailable' | 'configuration-required';
   readonly detail?: string;
 
   constructor(
-    code: 'source-unavailable' | 'service-unavailable',
+    code: 'source-unavailable' | 'service-unavailable' | 'configuration-required',
     detail?: string,
   ) {
     super(`${code}${detail ? `: ${detail}` : ''}`);
@@ -29,6 +38,40 @@ export class TranscriptionError extends Error {
     this.code = code;
     this.detail = detail;
   }
+}
+
+interface TranscriptionRuntimeConfig {
+  provider: TranscriptionProvider;
+  localModel: string;
+  localDevice: ReturnType<typeof normalizeLocalTranscriptionDevice>;
+  customModel: string;
+}
+
+export async function loadTranscriptionRuntimeConfig(): Promise<TranscriptionRuntimeConfig> {
+  let response: Response;
+  try {
+    response = await fetch('/api/keys', { cache: 'no-store' });
+  } catch (error) {
+    throw new TranscriptionError('service-unavailable', error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) throw new TranscriptionError('service-unavailable', `settings HTTP ${response.status}`);
+  const status = await response.json() as {
+    keys?: Record<string, { configured?: boolean }>;
+    models?: Record<string, string>;
+  };
+  const provider = normalizeTranscriptionProvider(status.models?.PREFERRED_TRANSCRIPTION_VENDOR);
+  if (provider === 'assemblyai' && !status.keys?.ASSEMBLYAI_API_KEY?.configured) {
+    throw new TranscriptionError('configuration-required', 'AssemblyAI API Key 未配置');
+  }
+  if (provider === 'custom' && !status.keys?.TRANSCRIPTION_CUSTOM_BASE_URL?.configured) {
+    throw new TranscriptionError('configuration-required', '自定义转写 API URL 未配置');
+  }
+  return {
+    provider,
+    localModel: status.models?.TRANSCRIPTION_LOCAL_MODEL || DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+    localDevice: normalizeLocalTranscriptionDevice(status.models?.TRANSCRIPTION_LOCAL_DEVICE),
+    customModel: status.models?.TRANSCRIPTION_CUSTOM_MODEL || DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
+  };
 }
 
 async function serviceFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -197,6 +240,7 @@ export async function transcribePath(
   onWait?: () => void,
   opts: TranscribeOptions = {},
 ): Promise<TranscriptResult> {
+  const config = await loadTranscriptionRuntimeConfig();
   let source = path;
   if (opts.asrPath && opts.asrPath.startsWith('/media/')) {
     source = opts.asrPath;
@@ -212,6 +256,12 @@ export async function transcribePath(
     // Fall back to the original media (or its IndexedDB copy) before failing.
     if (source === path) throw error;
     blob = await loadTranscriptionSource(path);
+  }
+  if (config.provider === 'local') {
+    return transcribeLocalBlob(blob, config.localModel, config.localDevice, onWait);
+  }
+  if (config.provider === 'custom') {
+    return transcribeCompatibleBlob(blob, config.customModel, opts.languageCode ?? 'zh', onWait);
   }
   return transcribeBlob(blob, onWait, { languageCode: opts.languageCode });
 }

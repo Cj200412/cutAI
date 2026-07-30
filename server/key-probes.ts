@@ -17,6 +17,10 @@ import {
   protocolForProvider,
   type LlmProvider,
 } from '../shared/llm-providers.ts';
+import {
+  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+  trimApiBaseUrl,
+} from '../shared/transcription-providers.ts';
 
 export interface ProbeResult {
   ok: boolean;
@@ -213,6 +217,26 @@ export const PROBES: Record<string, ProbeDef> = {
       signal: t(), headers: { authorization: get('ASSEMBLYAI_API_KEY') },
     }),
   },
+  'transcription/local': {
+    needs: [[]],
+    run: (get) => {
+      const model = get('TRANSCRIPTION_LOCAL_MODEL') || DEFAULT_LOCAL_TRANSCRIPTION_MODEL;
+      return fetch(`https://huggingface.co/${model}/resolve/main/config.json`, { signal: t() });
+    },
+    okText: () => '模型仓库可访问 · 首次转写时会下载并缓存在本机',
+  },
+  'transcription/custom': {
+    needs: [['TRANSCRIPTION_CUSTOM_BASE_URL']],
+    run: (get) => {
+      const root = trimApiBaseUrl(get('TRANSCRIPTION_CUSTOM_BASE_URL'));
+      const key = get('TRANSCRIPTION_CUSTOM_API_KEY');
+      return fetch(`${root}/models`, {
+        signal: t(),
+        headers: key ? bearer(key) : {},
+      });
+    },
+    models: parseModelCatalog,
+  },
   'sandbox/e2b': {
     needs: [['E2B_API_KEY']],
     run: (get) => fetch('https://api.e2b.dev/sandboxes', {
@@ -287,7 +311,7 @@ export async function runProbe(page: string, overrides: Record<string, unknown>)
   if (!probe) return { ok: false, message: '该厂商暂不支持连接测试' };
   const get = makeGetter(overrides);
   const ready = probe.needs.some((group) => group.every((n) => get(n).length > 0));
-  if (!ready) return { ok: false, message: '尚未填写 API Key · 填好后再点测试' };
+  if (!ready) return { ok: false, message: '尚未填写本页必填配置 · 填好后再点测试' };
   const started = Date.now();
   try {
     const response = await probe.run(get);

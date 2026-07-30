@@ -123,6 +123,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   将独立字幕样式与手动编辑集中到“字幕”工作区，并在“文字稿”中新增“字幕样式”快捷入口。
 - Improved local transcription source recovery by falling back to IndexedDB media and the original clip when extracted audio is unavailable.
   改进本地转写素材恢复：提取音频不可用时会回退到 IndexedDB 素材及原始片段。
+- Added selectable transcription backends: AssemblyAI, on-device Whisper through Transformers.js, and custom OpenAI-compatible audio transcription endpoints, with connection tests and direct setup guidance from the Transcript panel.
+  新增可选转写后端：AssemblyAI、基于 Transformers.js 的本机 Whisper，以及兼容 OpenAI 音频转写接口的自定义服务；同时加入连接测试和文字稿面板内的设置引导。
 - Added Ctrl/Command + mouse-wheel zoom to the motion-tracking target picker.
   为运动跟踪目标选择器新增 Ctrl/Command + 鼠标滚轮缩放。
 

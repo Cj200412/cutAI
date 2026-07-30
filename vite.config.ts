@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { serverPlugins } from './server/plugins/index.ts';
 import { seedKeystore, getKey } from './server/keystore.ts';
 import { productAssetsPlugin } from './server/product-assets.ts';
+import { normalizeTranscriptionProvider } from './shared/transcription-providers.ts';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -15,6 +16,8 @@ export default defineConfig(({ mode }) => {
   // startup snapshot for the `define` (initial agent capability manifest).
   seedKeystore(env);
   const aaiKey = env.ASSEMBLYAI_API_KEY || '';
+  const transcriptionProvider = normalizeTranscriptionProvider(env.PREFERRED_TRANSCRIPTION_VENDOR);
+  const customTranscriptionBaseUrl = env.TRANSCRIPTION_CUSTOM_BASE_URL || '';
   const imageKey = env.IMAGE_API_KEY || env.OPENAI_API_KEY || '';
   const geminiKey = env.GEMINI_API_KEY || '';
   const elevenKey = env.ELEVENLABS_API_KEY || '';
@@ -46,7 +49,9 @@ export default defineConfig(({ mode }) => {
         music: Boolean(murekaKey || minimaxKey),
         sound: Boolean(elevenKey),
         stock: Boolean(pexelsKey || pixabayKey || unsplashKey || freesoundKey),
-        transcription: Boolean(aaiKey),
+        transcription: transcriptionProvider === 'local'
+          || (transcriptionProvider === 'assemblyai' && Boolean(aaiKey))
+          || (transcriptionProvider === 'custom' && Boolean(customTranscriptionBaseUrl)),
         sandbox: Boolean(e2bKey),
         web: Boolean(firecrawlKey),
       }),

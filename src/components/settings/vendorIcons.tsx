@@ -30,7 +30,7 @@ export type VendorId =
   | 'llm' | 'anthropic' | 'openai' | 'gemini' | 'kimi' | 'qwen' | 'glm' | 'deepseek' | 'mistral' | 'openrouter'
   | 'xiaomi' | 'minimax' | 'hailuo' | 'elevenlabs' | 'doubao'
   | 'seedance' | 'kling' | 'mureka' | 'pexels' | 'pixabay' | 'unsplash' | 'freesound'
-  | 'assemblyai' | 'e2b' | 'firecrawl' | 'r2' | 'localdisk';
+  | 'assemblyai' | 'e2b' | 'firecrawl' | 'r2' | 'localdisk' | 'localwhisper';
 
 interface SvgIcon {
   readonly svg: string;
@@ -70,6 +70,7 @@ const MONOGRAMS: Partial<Record<VendorId, { bg: string; mono: string; fg?: strin
   mureka: { bg: '#7C5CFF', mono: 'μ' },
   e2b: { bg: '#FF8800', mono: 'E2', fg: '#40230a' },
   localdisk: { bg: '#5f6b7a', mono: 'HD', fg: '#eef2f7' }, // 本地磁盘(非厂商,中性灰)
+  localwhisper: { bg: '#5f6b7a', mono: 'W', fg: '#eef2f7' },
 };
 
 interface VendorIconProps {

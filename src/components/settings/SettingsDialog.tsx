@@ -107,13 +107,14 @@ function useHover(): [boolean, { onMouseEnter: () => void; onMouseLeave: () => v
 }
 
 /** 左树能力选中 + 中列厂商选中;切能力时中列重置为该能力第一家。 */
-function useTreeSelection(): {
+function useTreeSelection(initialGroupKey?: string, initialVendorKey?: string): {
   group: SettingsGroup; page: SettingsVendorPage;
   selectGroup: (key: string) => void; selectVendor: (key: string) => void;
 } {
-  const first = SETTINGS_CATEGORIES[0].groups[0];
+  const first = initialGroupKey ? findGroup(initialGroupKey) : SETTINGS_CATEGORIES[0].groups[0];
+  const initialVendor = first.vendors.find((vendor) => vendor.key === initialVendorKey) ?? first.vendors[0];
   const [groupKey, setGroupKey] = useState<string>(first.key);
-  const [vendorKey, setVendorKey] = useState<string>(first.vendors[0].key);
+  const [vendorKey, setVendorKey] = useState<string>(initialVendor.key);
   const group = findGroup(groupKey);
   const page = group.vendors.find((v) => v.key === vendorKey) ?? group.vendors[0];
   const selectGroup = (key: string): void => {
@@ -133,12 +134,20 @@ function applySavedToAgent(next: KeyStatusResponse): void {
   if (next.models) applyAgentModelStatus(next.keys, next.models);
 }
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({
+  onClose,
+  initialGroupKey,
+  initialVendorKey,
+}: {
+  onClose: () => void;
+  initialGroupKey?: string;
+  initialVendorKey?: string;
+}) {
   const t = useT();
   const { status, setStatus, loadError } = useKeyStatus();
   const [values, setValues] = useState<Values>({});
   const [modelOptions, setModelOptions] = useState<Record<string, readonly string[]>>({});
-  const { group, page, selectGroup, selectVendor } = useTreeSelection();
+  const { group, page, selectGroup, selectVendor } = useTreeSelection(initialGroupKey, initialVendorKey);
   const [reveal, setReveal] = useState(false);
   const { save, saving, msg, error } = useSaveKeys(values, (next) => {
     setStatus(next);

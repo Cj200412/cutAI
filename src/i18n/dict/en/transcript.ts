@@ -2,7 +2,9 @@
 // 来源:src/transcript/*(TranscriptPanel / TranscriptViews / useTranscript)。
 export default {
   '素材文件不可用，请在“我的素材”中重新链接后再转写': 'The media file is unavailable. Relink it in My Media before transcribing.',
-  '无法连接转写服务，请检查网络和 AssemblyAI 配置后重试': 'Cannot reach the transcription service. Check the network and AssemblyAI settings, then try again.',
+  '无法连接转写服务，请检查网络和当前转写后端配置后重试': 'Cannot reach the transcription service. Check the network and the selected transcription backend, then try again.',
+  '当前转写后端尚未配置。请打开“设置 → 素材 · 转写 → 转写 / 口播剪辑”，选择并测试一个可用后端。': 'The selected transcription backend is not configured. Open Settings → Assets · Transcription → Transcription / Script Editing, then choose and test a backend.',
+  '打开转写设置': 'Open transcription settings',
   // TranscriptPanel — 工具条与停顿弹层
   '停顿': 'Pauses',
   '段落视图': 'Paragraph view',
@@ -26,7 +28,7 @@ export default {
   '还没有可转写的轨道': 'No transcribable tracks yet',
   '把口播 / 配音或带人声的视频加到时间线后，再打开文字稿。': 'Add narration / voiceover or a video with speech to the timeline, then open the transcript.',
   '转写词级文字稿': 'Transcribe word-level script',
-  '中文词级转写 · 说话人分离 · 该轨共 {n} 段会逐段上传。转写后可点词删减（删词=剪音频）。': 'Word-level Chinese transcription · speaker diarization · all {n} clips on this track upload one by one. Then click words to cut them (delete a word = cut the audio).',
+  '中文词级转写 · 该轨共 {n} 段会逐段处理。支持说话人分离的后端会保留说话人；转写后可点词删减（删词=剪音频）。': 'Word-level Chinese transcription · all {n} clips are processed in order. Backends with diarization preserve speakers; then click words to cut them (delete a word = cut the audio).',
   '包含疑似背景音乐（已跳过 {n} 段）': 'Include likely background music ({n} clips skipped)',
   '该轨只有背景音乐类素材。打开「包含疑似背景音乐」或换到配音轨。': 'This track only has background-music clips. Turn on "Include likely background music" or switch to a voiceover track.',
   '转写中…': 'Transcribing…',
@@ -64,10 +66,10 @@ export default {
   '删气口': 'Delete gap',
   '还原': 'Reset',
   // useTranscript — 转写任务进度/错误
-  '上传 {label}…': 'Uploading {label}…',
-  '上传音频…': 'Uploading audio…',
+  '准备 {label}…': 'Preparing {label}…',
+  '准备音频…': 'Preparing audio…',
   '转写 {label}…': 'Transcribing {label}…',
-  '({i}/{total}) 上传 {label}…': '({i}/{total}) Uploading {label}…',
+  '({i}/{total}) 准备 {label}…': '({i}/{total}) Preparing {label}…',
   '({i}/{total}) 转写 {label}…': '({i}/{total}) Transcribing {label}…',
   '已完成 {ok}/{total} 段；失败：{fails}': 'Completed {ok}/{total} clips; failed: {fails}',
 } as Record<string, string>;

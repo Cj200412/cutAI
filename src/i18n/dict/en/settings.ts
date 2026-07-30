@@ -28,6 +28,9 @@ export default {
   '素材 · 转写': 'Assets · Transcription',
   '在线图库': 'Stock Media',
   '转写 / 口播剪辑': 'Transcription / Script Editing',
+  '转写后端': 'Transcription backend',
+  '本地 Whisper': 'Local Whisper',
+  '自定义兼容服务': 'Custom compatible service',
   '存储': 'Storage',
   '媒体存储': 'Media Storage',
   '增强工具': 'Power Tools',
@@ -41,6 +44,12 @@ export default {
   '可灵 Kling': 'Kling',
   'MiniMax 海螺': 'MiniMax Hailuo',
   '本地磁盘': 'Local Disk',
+  '本地模型': 'Local model',
+  '推理设备': 'Inference device',
+  '自动（优先 WebGPU）': 'Auto (prefer WebGPU)',
+  'WebGPU（显卡）': 'WebGPU (GPU)',
+  'WASM（CPU）': 'WASM (CPU)',
+  'API Key（可选）': 'API Key (optional)',
 
   // ── 能力组 hint ──
   '对话与工具调用的核心，未配置无法对话。': 'Core of chat and tool calls — chat is unavailable until configured.',
@@ -88,6 +97,16 @@ export default {
   '可直接使用 Anthropic 官方 API Key；如使用兼容服务，再修改 Base URL 和模型。': 'Use an official Anthropic API key directly, or change the Base URL and model for a compatible service.',
   '默认使用 Claude Fable 5；自定义兼容地址时，也可填写该服务支持的模型 ID。': 'Claude Fable 5 is the default. With a compatible endpoint, enter any model ID supported by that service.',
   '每个厂商独立保存地址、密钥与模型。先测试连接，成功后可从接口返回的模型中选择。': 'Each provider keeps its own endpoint, key, and model. Test the connection, then choose from the models returned by that API.',
+  '本地 Whisper 首次使用会下载模型并缓存在本机；自定义服务需兼容 OpenAI 音频转写接口。':
+    'Local Whisper downloads and caches the model on first use. Custom services must support the OpenAI audio transcription API.',
+  '音频与文字均不离开本机。首次转写会从 Hugging Face 下载所选 ONNX 模型；tiny 最省资源，base 更准，small 对硬件要求最高。':
+    'Audio and text stay on this machine. The selected ONNX model downloads from Hugging Face on first use; tiny uses the fewest resources, base is more accurate, and small has the highest hardware requirements.',
+  '适用于 faster-whisper-server、LocalAI 或自建网关。需提供 OpenAI 兼容的 /v1/audio/transcriptions，并返回 verbose_json 词级或分段时间戳。':
+    'For faster-whisper-server, LocalAI, or a custom gateway. It must provide an OpenAI-compatible /v1/audio/transcriptions endpoint and return verbose_json word or segment timestamps.',
+  '填写完整 API 前缀；请求会经 CutAI 本地服务转发，避免浏览器 CORS。':
+    'Enter the complete API prefix. Requests are relayed through the local CutAI service to avoid browser CORS.',
+  '测试连接后可选择接口返回的模型，也可直接填写服务支持的模型 ID。':
+    'After testing, choose a model returned by the API or enter any model ID supported by the service.',
   '填写完整 API 前缀；可使用官方地址、自建网关或兼容中转。': 'Enter the complete API prefix. You can use the official endpoint, your own gateway, or a compatible relay.',
   '测试连接后可直接选择接口返回的模型，也可以手动填写模型 ID。': 'After testing, choose a returned model or enter a model ID manually.',
   '选择服务实际支持的协议；OpenAI 使用 Responses API，兼容服务使用 Chat Completions API。': 'Choose the protocol your service actually supports. OpenAI uses the Responses API; compatible services use Chat Completions.',

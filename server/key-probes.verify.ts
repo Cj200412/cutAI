@@ -13,7 +13,7 @@ const EXPECTED_PAGES = [
   'video/seedance', 'video/kling', 'video/hailuo',
   'music/mureka', 'music/minimax',
   'stock/pexels', 'stock/pixabay', 'stock/unsplash', 'stock/freesound',
-  'transcription/assemblyai',
+  'transcription/assemblyai', 'transcription/local', 'transcription/custom',
   'sandbox/e2b',
   'web/firecrawl',
   'storage/r2', 'storage/local',
@@ -60,10 +60,10 @@ assert.match(networkMessage(Object.assign(new Error('The operation was aborted d
   assert.match(unknown.message, /暂不支持/);
   const unconfigured = await runProbe('voice/elevenlabs', {});
   assert.equal(unconfigured.ok, false);
-  assert.match(unconfigured.message, /尚未填写 API Key/);
+  assert.match(unconfigured.message, /尚未填写本页必填配置/);
   // 豆包需要双 key 齐:只有 App ID 仍算未配置
   const half = await runProbe('voice/doubao', { DOUBAO_TTS_APP_ID: 'a' });
-  assert.match(half.message, /尚未填写 API Key/);
+  assert.match(half.message, /尚未填写本页必填配置/);
 }
 
 // 7. 本地保存目录探针:空组 needs = 未填也可测(未设=默认目录);相对路径是配置

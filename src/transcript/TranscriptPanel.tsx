@@ -10,6 +10,7 @@ import { theme } from '../theme';
 import { Icon } from '../components/icons';
 import { useT } from '../i18n/locale';
 import { clipLabel, isLikelyNonSpeech, mediaOnTrack, pickDefaultTrack, trackTitle, type TranscriptTrackOption } from './trackOptions';
+import { normalizeTranscriptionProvider } from '../../shared/transcription-providers';
 
 export type { TranscriptTrackOption } from './trackOptions';
 
@@ -119,6 +120,18 @@ export function TranscriptPanel({
         setFocusItemId(itemId);
       });
     } catch { /* hook holds error */ }
+  };
+
+  const openTranscriptionSettings = async () => {
+    let provider = 'assemblyai';
+    try {
+      const response = await fetch('/api/keys', { cache: 'no-store' });
+      const body = await response.json() as { models?: Record<string, string> };
+      provider = normalizeTranscriptionProvider(body.models?.PREFERRED_TRANSCRIPTION_VENDOR);
+    } catch { /* settings dialog still opens on the default provider */ }
+    window.dispatchEvent(new CustomEvent('cutai:open-settings', {
+      detail: { group: 'transcription', vendor: `transcription/${provider}` },
+    }));
   };
 
   const sectionsToShow = useMemo(() => {
@@ -242,7 +255,7 @@ export function TranscriptPanel({
             <div className="cc-tx-empty-kicker">{aliasLabel}</div>
             <div className="cc-tx-empty-title">{t('转写词级文字稿')}</div>
             <p className="cc-tx-muted">
-              {t('中文词级转写 · 说话人分离 · 该轨共 {n} 段会逐段上传。转写后可点词删减（删词=剪音频）。', { n: clips.length })}
+              {t('中文词级转写 · 该轨共 {n} 段会逐段处理。支持说话人分离的后端会保留说话人；转写后可点词删减（删词=剪音频）。', { n: clips.length })}
             </p>
             {skippedMusic > 0 && (
               <label className="cc-tx-check music">
@@ -268,7 +281,14 @@ export function TranscriptPanel({
                 {busy ? (progressNote ?? t('转写中…')) : t('转写 {alias}（{n} 段）', { alias: activeTrack?.alias ?? '', n: clips.length })}
               </button>
             )}
-            {status === 'error' && <div className="cc-tx-error">{error}</div>}
+            {status === 'error' && (
+              <div className="cc-tx-error">
+                <div>{error}</div>
+                <button type="button" className="cc-tx-btn sm" onClick={() => { void openTranscriptionSettings(); }}>
+                  <Icon name="sliders" size={12} />{t('打开转写设置')}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>

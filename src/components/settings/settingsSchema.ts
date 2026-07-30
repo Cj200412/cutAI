@@ -9,6 +9,11 @@ import {
   LLM_PROVIDER_PRESETS,
   llmProviderConfigNames,
 } from '../../../shared/llm-providers';
+import {
+  DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
+  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+  LOCAL_TRANSCRIPTION_MODELS,
+} from '../../../shared/transcription-providers';
 import type { IconName } from '../icons';
 import type { VendorId } from './vendorIcons';
 
@@ -32,6 +37,8 @@ export interface SettingsField {
   readonly defaultLabel?: string;
   /** Agent LLM field populated from the provider's /models response after a connection test. */
   readonly discoverableModel?: boolean;
+  /** Optional secrets do not gate the page's configured state (for local/custom endpoints without auth). */
+  readonly optional?: boolean;
 }
 
 export interface SettingsVendorPage {
@@ -238,9 +245,63 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
           { key: 'stock/freesound', vendor: 'freesound', title: 'Freesound', fields: [secret('FREESOUND_API_KEY', 'API Key')] },
         ] },
       { key: 'transcription', title: '转写 / 口播剪辑', hint: 'transcribe_track · 词级字幕、清口水、删词。',
+        route: {
+          name: 'PREFERRED_TRANSCRIPTION_VENDOR',
+          label: '转写后端',
+          kind: 'select',
+          defaultLabel: 'AssemblyAI',
+          note: '本地 Whisper 首次使用会下载模型并缓存在本机；自定义服务需兼容 OpenAI 音频转写接口。',
+          options: [
+            { value: 'local', label: '本地 Whisper' },
+            { value: 'custom', label: '自定义兼容服务' },
+          ],
+        },
         vendors: [
           { key: 'transcription/assemblyai', vendor: 'assemblyai', title: 'AssemblyAI',
             fields: [secret('ASSEMBLYAI_API_KEY', 'API Key')] },
+          {
+            key: 'transcription/local',
+            vendor: 'localwhisper',
+            title: '本地 Whisper',
+            note: '音频与文字均不离开本机。首次转写会从 Hugging Face 下载所选 ONNX 模型；tiny 最省资源，base 更准，small 对硬件要求最高。',
+            fields: [
+              modelSelect('TRANSCRIPTION_LOCAL_MODEL', '本地模型', DEFAULT_LOCAL_TRANSCRIPTION_MODEL, LOCAL_TRANSCRIPTION_MODELS),
+              {
+                name: 'TRANSCRIPTION_LOCAL_DEVICE',
+                label: '推理设备',
+                kind: 'select',
+                defaultLabel: '自动（优先 WebGPU）',
+                options: [
+                  { value: 'webgpu', label: 'WebGPU（显卡）' },
+                  { value: 'wasm', label: 'WASM（CPU）' },
+                ],
+              },
+            ],
+          },
+          {
+            key: 'transcription/custom',
+            vendor: 'openai',
+            title: '自定义兼容服务',
+            note: '适用于 faster-whisper-server、LocalAI 或自建网关。需提供 OpenAI 兼容的 /v1/audio/transcriptions，并返回 verbose_json 词级或分段时间戳。',
+            fields: [
+              {
+                name: 'TRANSCRIPTION_CUSTOM_BASE_URL',
+                label: 'API URL',
+                kind: 'text',
+                defaultLabel: 'http://127.0.0.1:8000/v1',
+                note: '填写完整 API 前缀；请求会经 CutAI 本地服务转发，避免浏览器 CORS。',
+              },
+              { name: 'TRANSCRIPTION_CUSTOM_API_KEY', label: 'API Key（可选）', kind: 'secret', optional: true },
+              {
+                name: 'TRANSCRIPTION_CUSTOM_MODEL',
+                label: '模型',
+                kind: 'text',
+                defaultLabel: DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
+                discoverableModel: true,
+                note: '测试连接后可选择接口返回的模型，也可直接填写服务支持的模型 ID。',
+              },
+            ],
+          },
         ] },
     ],
   },
@@ -331,7 +392,8 @@ export function modelValue(status: KeyStatusResponse | null, name: string): stri
  * 无 secret 的页(本地磁盘)看任一字段是否已设值。 */
 export function vendorConfigured(status: KeyStatusResponse | null, page: SettingsVendorPage): boolean {
   if (!status) return false;
-  const secrets = page.fields.filter((f) => f.kind === 'secret');
+  if (page.key === 'transcription/local') return true;
+  const secrets = page.fields.filter((f) => f.kind === 'secret' && !f.optional);
   if (secrets.length === 0) return page.fields.some((f) => Boolean(status.keys[f.name]?.configured));
   return secrets.every((f) => Boolean(status.keys[f.name]?.configured));
 }
@@ -379,6 +441,8 @@ const ROUTE_NEEDS: Record<string, readonly (readonly string[])[]> = {
   kling: [['KLING_API_KEY']],
   hailuo: [['MINIMAX_API_KEY']],
   mureka: [['MUREKA_API_KEY']],
+  local: [[]],
+  custom: [['TRANSCRIPTION_CUSTOM_BASE_URL']],
 };
 
 /** 路由下拉选项文案:厂商未配置时加「（未配置）」后缀,仍可选(Agent 侧有回退询问护栏)。

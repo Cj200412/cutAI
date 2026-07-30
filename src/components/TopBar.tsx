@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { theme } from '../theme';
 import { Icon, type IconName } from './icons';
 import { ExportHistory } from './ExportHistory';
@@ -6,6 +6,7 @@ import { SkinPicker } from './settings/SkinPicker';
 import { McpGuideDialog } from './settings/McpGuide';
 import { getLocale, setLocale, useT } from '../i18n/locale';
 import { invokeAction } from '../shortcuts/actionRegistry';
+import { SettingsDialog } from './settings/SettingsDialog';
 
 // 语言切换:文本小丸显示当前语言,点击中英互切。
 // 编辑器顶栏与 Dashboard 顶栏共用(从这里导出)。
@@ -51,6 +52,15 @@ export function TopBar({ projectName, canUndo, canRedo, exporting, onHome, onRen
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [settingsTarget, setSettingsTarget] = useState<{ group?: string; vendor?: string } | null>(null);
+  useEffect(() => {
+    const openSettings = (event: Event) => {
+      const detail = (event as CustomEvent<{ group?: string; vendor?: string }>).detail ?? {};
+      setSettingsTarget(detail);
+    };
+    window.addEventListener('cutai:open-settings', openSettings);
+    return () => window.removeEventListener('cutai:open-settings', openSettings);
+  }, []);
   const commit = () => { setEditing(false); if (onRename && draft.trim() && draft.trim() !== projectName) onRename(draft.trim()); };
 
   return (
@@ -82,6 +92,7 @@ export function TopBar({ projectName, canUndo, canRedo, exporting, onHome, onRen
       <TBtn icon="redo" title={t('重做')} onClick={() => invokeAction('redo', undefined, 'toolbar')} disabled={!canRedo} />
       <TBtn icon="keyboard" title={t('编辑快捷键')} onClick={() => invokeAction('keyboard-shortcuts', undefined, 'toolbar')} />
       <TBtn icon="plug" title={t('外部 Agent 接入 (MCP)')} onClick={() => setMcpOpen(true)} />
+      <TBtn icon="sliders" title={t('设置 · API 密钥')} onClick={() => setSettingsTarget({})} />
       <TBtn icon="palette" title={t('设计风格(品牌)')} onClick={() => invokeAction('open-design', undefined, 'toolbar')} />
       <SkinPicker />
       <TBtn icon="history" title={t('历史版本')} onClick={() => invokeAction('open-history', undefined, 'toolbar')} />
@@ -95,6 +106,13 @@ export function TopBar({ projectName, canUndo, canRedo, exporting, onHome, onRen
       </button>
       <div title={t('账户')} style={{ width: 20, height: 20, borderRadius: '50%', marginLeft: 2, background: 'conic-gradient(from 210deg, #6d6cff, #ff5f9e, #ffb35f, #6d6cff)', flexShrink: 0 }} />
       {mcpOpen && <McpGuideDialog onClose={() => setMcpOpen(false)} />}
+      {settingsTarget && (
+        <SettingsDialog
+          initialGroupKey={settingsTarget.group}
+          initialVendorKey={settingsTarget.vendor}
+          onClose={() => setSettingsTarget(null)}
+        />
+      )}
     </header>
   );
 }
