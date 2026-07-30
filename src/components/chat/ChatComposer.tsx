@@ -505,7 +505,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   <span>{t('推理强度')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: theme.textDim, fontSize: 11 }}>{effortLabels[selectedEffort]}<span>›</span></span>
                 </button>
                 {activeCli && <button type="button" onClick={() => setModelLayer('file-access')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
-                  <span>{t('文件权限')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: cliFileAccess === 'workspace-write' ? theme.gold : theme.textDim, fontSize: 11 }}>{cliFileAccess === 'workspace-write' ? t('直接编辑') : t('安全提案')}<span>›</span></span>
+                  <span>{t('文件权限')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: agentSettings.planMode ? theme.accent : cliFileAccess === 'workspace-write' ? theme.gold : theme.textDim, fontSize: 11 }}>{agentSettings.planMode ? t('计划模式（只读）') : cliFileAccess === 'workspace-write' ? t('直接编辑') : t('安全提案')}<span>›</span></span>
                 </button>}
                 <button type="button" onClick={() => onAutoApplyChange(!autoApply)} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
                   <span>{t('自动允许生成')}</span>
@@ -522,6 +522,7 @@ export function ChatComposer(props: ChatComposerProps) {
           </div>
           {modelLayer === 'file-access' ? (
             <div>
+              {agentSettings.planMode && <div style={{ padding: '6px 10px 8px', color: theme.accent, fontSize: 11, lineHeight: 1.45 }}>{t('计划模式已启用：本轮只读并先给计划，文件权限不会直接写入。')}</div>}
               <button type="button" onClick={() => {
                 localStorage.setItem(cliFileAccessKey, 'proposal-only');
                 setCliSelectionVersion((value) => value + 1);

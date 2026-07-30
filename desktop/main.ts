@@ -165,6 +165,7 @@ function registerDesktopHandlers(secrets: CutaiSecretStore, cliAgents: CliAgentH
       ...(typeof row.model === 'string' ? { model: row.model } : {}),
       ...(typeof row.reasoningEffort === 'string' ? { reasoningEffort: row.reasoningEffort } : {}),
       ...(row.fileAccess === 'workspace-write' ? { fileAccess: row.fileAccess } : {}),
+      ...(row.planMode === true ? { planMode: true } : {}),
     }, (streamEvent) => {
       if (!event.sender.isDestroyed()) event.sender.send('cutai:cli-event', streamEvent);
     });
@@ -279,7 +280,6 @@ async function boot(): Promise<void> {
     secrets,
   );
   const { origin } = await startEmbeddedServer(DIST_DIR, llmProxyConfig);
-  cliAgents.setOrigin(origin);
   console.log(`[desktop] embedded server at ${origin}`);
 
   const win = new BrowserWindow({

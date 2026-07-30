@@ -73,9 +73,24 @@ function EditorLoader({ meta, onHome, onRename }: { meta: ProjectMeta; onHome: (
   const [initial, setInitial] = useState<ProjectDoc | null>(null);
   useEffect(() => {
     let alive = true;
-    loadProject(meta.id).then((d) => { if (alive) setInitial(d ?? emptyDoc()); });
+    void (async () => {
+      let document = await loadProject(meta.id);
+      if (meta.storageMode === 'workspace' && meta.rootPath && window.cutaiDesktop) {
+        try {
+          const loaded = await window.cutaiDesktop.openWorkspace(meta.rootPath);
+          const migrated = migrateProjectDoc(loaded.document);
+          if (migrated) {
+            document = withWorkspaceMedia(migrated, loaded.media);
+            await saveProject(meta.id, document);
+          }
+        } catch {
+          // Keep the local cache available when a workspace is temporarily offline.
+        }
+      }
+      if (alive) setInitial(document ?? emptyDoc());
+    })();
     return () => { alive = false; };
-  }, [meta.id]);
+  }, [meta.id, meta.rootPath, meta.storageMode]);
   if (!initial) return <Splash text={t('加载工程…')} />;
   return <Suspense fallback={<Splash text={t('加载编辑器…')} />}><Editor initial={initial} project={meta} onHome={onHome} onRename={onRename} /></Suspense>;
 }

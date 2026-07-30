@@ -3,6 +3,7 @@ import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { ChatMessage } from './ChatMessage';
 import type { DisplayMessage } from '../../agent/useAgent';
+import { hasToolResultError } from './tool-result';
 
 const GREEN = theme.success;
 
@@ -13,8 +14,8 @@ export function ToolGroupRow({ name, items }: { name: string; items: { msg: Disp
   const t = useT();
   const [open, setOpen] = useState(false);
   const anyError = items.some(({ msg }) => {
-    const r = msg.tool?.result as Record<string, unknown> | undefined;
-    return !!r && 'error' in r;
+    const r = msg.tool?.result;
+    return hasToolResultError(r);
   });
   return (
     <div style={{ margin: '9px 0' }}>

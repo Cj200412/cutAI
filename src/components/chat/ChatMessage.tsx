@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { theme } from '../../theme';
 import { Icon } from '../icons';
 import { useT } from '../../i18n/locale';
@@ -6,8 +6,20 @@ import type { DisplayMessage } from '../../agent/useAgent';
 import { parseWidgets } from './widget-parse';
 import { WidgetCard } from './WidgetCard';
 import { Markdown } from './Markdown';
+import { hasToolResultError } from './tool-result';
 
 const GREEN = theme.success;
+
+function ThinkingElapsed({ active }: { active: boolean }) {
+  const started = useState(() => performance.now())[0];
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    if (!active) return;
+    const id = window.setInterval(() => setNow(performance.now()), 100);
+    return () => window.clearInterval(id);
+  }, [active]);
+  return <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', opacity: 0.65 }}>{((now - started) / 1000).toFixed(1)}s</span>;
+}
 
 // 从工具参数里取「最有区分度」的那一个做行内摘要——按识别性排序:先具体标识
 // (query/itemId/名字…)，再泛化(action/target…)。让同名多次调用一眼可辨，不再像重复。
@@ -26,9 +38,14 @@ function toolArgSummary(args: unknown): string {
   return '';
 }
 
+function toolPreview(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2) ?? String(value); } catch { return String(value); }
+}
+
 // 折叠的「思考过程」块 — 原生 thinking 流与内联 <thinking> 抽取都归到这里
 // (两者统一折成 thinking 块,默认折叠)。
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
@@ -36,7 +53,7 @@ function ThinkingBlock({ text }: { text: string }) {
       <button onClick={() => setOpen((v) => !v)} title={open ? t('收起思考过程') : t('展开思考过程')}
         style={{ background: 'none', border: 'none', cursor: 'pointer', color: theme.textDim, fontSize: 11.5, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ display: 'inline-flex', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
-        {t('思考过程')}
+        {t('思考过程')}<ThinkingElapsed active={active} />
       </button>
       {open && (
         <Markdown text={text} style={{ marginTop: 4, maxHeight: 180, overflowY: 'auto', padding: '6px 8px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontStyle: 'italic', fontSize: 11.5, lineHeight: 1.55, color: theme.textDim, whiteSpace: 'pre-wrap', background: theme.panelAlt, border: `0.5px solid ${theme.border}`, borderRadius: 4 }} />
@@ -58,6 +75,7 @@ interface ChatMessageProps {
 export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: ChatMessageProps) {
   const t = useT();
   const [copied, setCopied] = useState(false);
+  const [toolOpen, setToolOpen] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(msg.text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400); }).catch(() => {});
   };
@@ -72,11 +90,18 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
 
   if (msg.role === 'tool') {
     const tool = msg.tool!;
-    const r = tool.result as Record<string, unknown> | undefined;
-    const ok = !r || !('error' in r);
+    const r = tool.result;
+    const hasError = hasToolResultError(r);
+    const error = hasError
+      ? r.error
+      : undefined;
+    const ok = !hasError;
     // 关键参数摘要:同名工具的多次调用(search_templates×7、normalize_loudness×8…)
     // 之前只印工具名，看着像重复；补上区分性参数(query/itemId/category…)一眼可辨。
     const summary = toolArgSummary(tool.args);
+    const argsText = toolPreview(tool.args);
+    const resultText = toolPreview(r);
+    const previewText = `参数\n${argsText}\n\n结果\n${resultText}`;
     return (
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9, margin: '9px 0', color: theme.textDim, fontSize: 12.5 }}
         title={typeof tool.args === 'object' ? JSON.stringify(tool.args) : String(tool.args)}>
@@ -86,7 +111,12 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
         <span style={{ minWidth: 0, overflowWrap: 'anywhere', lineHeight: 1.45 }}>
           <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: 0.2 }}>{tool.name}</span>
           {summary && <span style={{ opacity: 0.8 }}> · {summary}</span>}
-          {!ok && <span style={{ color: theme.danger }}>：{String(r!.error)}</span>}
+          {!ok && <span style={{ color: theme.danger }}>：{String(error)}</span>}
+          <button type="button" onClick={() => setToolOpen((value) => !value)}
+            style={{ display: 'block', marginTop: 3, padding: 0, border: 0, background: 'none', color: theme.accent, cursor: 'pointer', fontSize: 11 }}>
+            {toolOpen ? t('收起工具详情') : t('预览工具详情')}
+          </button>
+          {toolOpen && <pre style={{ margin: '5px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: '6px 8px', borderRadius: 4, background: theme.panelAlt, color: theme.textDim, fontSize: 10.5, lineHeight: 1.45 }}>{previewText.slice(0, 12000)}{previewText.length > 12000 ? '\n…' : ''}</pre>}
         </span>
       </div>
     );
@@ -119,7 +149,7 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
   const segments = parseWidgets(msg.text);
   return (
     <div style={{ margin: '16px 0' }}>
-      {!!msg.thinking?.trim() && <ThinkingBlock text={msg.thinking} />}
+      {!!msg.thinking?.trim() && <ThinkingBlock text={msg.thinking} active={!!streaming} />}
       {segments.map((seg, i) =>
         seg.type === 'widget' ? (
           <WidgetCard

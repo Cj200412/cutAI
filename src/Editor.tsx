@@ -17,7 +17,7 @@ import { useEditor } from './editor/store';
 import type { ProjectDoc, TimelineItem, TimelineState } from './editor/types';
 import { captionsOnTrack, selectedIdsOf, timelineTrackIds, trackAlias, trackKind } from './editor/types';
 import { TEMPLATES } from './editor/initial';
-import { saveProject, loadCreativeMode, saveCreativeMode, type ProjectMeta } from './persist/projectStore';
+import { saveProject, loadCreativeMode, saveCreativeMode, migrateProjectDoc, type ProjectMeta } from './persist/projectStore';
 import { importMedia } from './media/upload';
 import { importUploadedMedia } from './media/mobileImport';
 import type { MobileUploadRecord } from './media/mobileUploadApi';
@@ -111,6 +111,17 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
       await window.cutaiDesktop.saveWorkspace(project.rootPath, next);
     }
   }, [project.id, project.rootPath, project.storageMode]);
+  const syncWorkspaceEdits = useCallback(async (): Promise<boolean> => {
+    if (project.storageMode !== 'workspace' || !project.rootPath || !window.cutaiDesktop) return false;
+    const loaded = await window.cutaiDesktop.openWorkspace(project.rootPath);
+    const next = migrateProjectDoc(loaded.document);
+    if (!next) throw new Error(t('Claude 修改后的工程数据校验不通过，未载入编辑器'));
+    if (JSON.stringify(next) === JSON.stringify(docRef.current)) return false;
+    commands.applyDoc(next);
+    await saveProject(project.id, next);
+    showAppToast(t('已将 Claude 的工程修改同步到当前编辑器'));
+    return true;
+  }, [commands, project.id, project.rootPath, project.storageMode, t]);
   const { offlineSrcs, offlineSrcsRef, offlineAssetIds, markOffline: markMediaOffline } = useOfflineMedia(doc);
 // 创作模式:选中的技能 id 注入系统提示，并存入 IDB(不进 undo 历史)。
   const [creativeMode, setCreativeMode] = useState<string | null>(null);
@@ -539,7 +550,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
 
       {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
 
-      <ChatPanel ctx={agentCtx} projectId={project.id} projectRoot={project.rootPath} collapsed={chatCollapsed} onToggleCollapse={() => setChatCollapsed((v) => !v)} onPreviewState={setPreviewState} seed={chatSeed} creativeMode={creativeMode} onCreativeModeChange={changeCreativeMode} onImportMedia={importToPool} />
+      <ChatPanel ctx={agentCtx} projectId={project.id} projectRoot={project.rootPath} collapsed={chatCollapsed} onToggleCollapse={() => setChatCollapsed((v) => !v)} onPreviewState={setPreviewState} seed={chatSeed} creativeMode={creativeMode} onCreativeModeChange={changeCreativeMode} onImportMedia={importToPool} onWorkspaceEdited={syncWorkspaceEdits} />
 
       <div style={{ gridColumn: 2, gridRow: '2 / 5' }}>
         {!chatCollapsed && <Divider onResize={(dx) => setChatW((w) => clamp(w + dx, CHAT_MIN_W, Math.max(CHAT_MIN_W, viewportW - libW - CANVAS_MIN_W - SPLITTER_TOTAL_W)))} />}

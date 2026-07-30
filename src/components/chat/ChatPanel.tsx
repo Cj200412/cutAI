@@ -16,6 +16,7 @@ import { ChatMessage } from './ChatMessage';
 import { ToolGroupRow } from './ToolGroupRow';
 import { groupMessages } from './message-groups';
 import { ChatComposer, type ChatMode, type RefItem } from './ChatComposer';
+import { loadAgentSettings } from '../../agent/settings/agentSettings';
 import { BrandMark, CutaiWordmark, Icon } from '../icons';
 import {
   clearComposerDraft,
@@ -90,6 +91,8 @@ interface ChatPanelProps {
   onCreativeModeChange: (id: string | null) => void;
   /** Import a pasted/attached file into the media pool (same pipeline as 我的素材 upload). */
   onImportMedia: (file: File) => Promise<MediaAsset>;
+  /** Pull a directly edited .cutai/project.json into the open editor. */
+  onWorkspaceEdited?: () => Promise<boolean>;
 }
 
 // 运行计时:AI 思考/执行期间实时跳动的秒数(保留两位小数)。挂载即起表,
@@ -116,7 +119,7 @@ const GUARD_SKILL_LABELS = {
   'video-gen': '视频生成',
 } as const;
 
-export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleCollapse, onPreviewState, seed, creativeMode, onCreativeModeChange, onImportMedia }: ChatPanelProps) {
+export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleCollapse, onPreviewState, seed, creativeMode, onCreativeModeChange, onImportMedia, onWorkspaceEdited }: ChatPanelProps) {
   const t = useT();
   const {
     messages: apiMessages, running: apiRunning, send: sendApi, stop: stopApi, enhance, proposal, applyProposal, rejectProposal, clearHistory: clearApiHistory,
@@ -136,21 +139,32 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     if (event.runId !== cliRunIdRef.current) return;
     setCliMessages((current) => {
       const next = [...current];
-      const assistantIndex = next.findLastIndex((message) => message.role === 'assistant');
-      const updateAssistant = (patch: (message: DisplayMessage) => DisplayMessage): void => {
-        if (assistantIndex >= 0) next[assistantIndex] = patch(next[assistantIndex]);
+      const ensureAssistant = (): number => {
+        const last = next[next.length - 1];
+        if (last?.role !== 'assistant') next.push({ role: 'assistant', text: '', thinking: '' });
+        return next.length - 1;
+      };
+      const updateAssistant = (patch: (message: DisplayMessage) => DisplayMessage, newSegment = false): void => {
+        const assistantIndex = newSegment || next[next.length - 1]?.role !== 'assistant'
+          ? ensureAssistant()
+          : next.length - 1;
+        next[assistantIndex] = patch(next[assistantIndex]);
       };
       if (event.type === 'status') {
-        updateAssistant((message) => ({
-          ...message,
-          thinking: !message.thinking || message.thinking.includes('等待结构化事件')
-            ? event.message
-            : message.thinking.includes(event.message) ? message.thinking : `${message.thinking}\n${event.message}`,
-        }));
+        updateAssistant((message) => {
+          const lifecyclePlaceholder = !message.thinking
+            || message.thinking.includes('等待结构化事件')
+            || message.thinking.includes('正在建立原生流式会话');
+          if (!lifecyclePlaceholder || message.text) return message;
+          return { ...message, thinking: event.message };
+        });
       } else if (event.type === 'thinking') {
         updateAssistant((message) => ({
           ...message,
-          thinking: `${message.thinking && !message.thinking.includes('等待结构化事件') ? `${message.thinking}\n` : ''}${event.delta}`,
+          thinking: `${message.thinking
+            && !message.thinking.includes('等待结构化事件')
+            && !message.thinking.includes('正在建立原生流式会话')
+            ? message.thinking : ''}${event.delta}`,
         }));
       } else if (event.type === 'text') {
         updateAssistant((message) => ({ ...message, text: `${message.text}${event.delta}` }));
@@ -195,9 +209,9 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     }
   }, [agentSource, sourceKey]);
   useEffect(() => {
-    if (agentSource === 'api') return;
+    if (agentSource === 'api' || cliRunning) return;
     localStorage.setItem(cliChatKey(agentSource), JSON.stringify({ messages: cliMessages, sessionId: cliSessionId }));
-  }, [agentSource, cliMessages, cliSessionId]);
+  }, [agentSource, cliMessages, cliSessionId, cliRunning]);
   const sendCli = async (text: string, references: AgentReference[] = []): Promise<void> => {
     const desktop = window.cutaiDesktop;
     const profile = cliProfiles.find((item) => item.id === agentSource);
@@ -244,24 +258,47 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         ? `${text}\n\n<chat_context_entries>\n${JSON.stringify(contextEntries)}\n</chat_context_entries>`
         : text;
       const model = localStorage.getItem(`cutai:cli-model:${projectId}:${liveProfile.id}`) || liveProfile.defaultModel;
+      const sessionModelKey = `cutai:cli-session-model:${projectId}:${liveProfile.id}`;
+      const sessionModel = localStorage.getItem(sessionModelKey);
+      const modelChanged = Boolean(cliSessionId && sessionModel && sessionModel !== model);
+      const conversationBridge = modelChanged
+        ? cliMessages
+          .filter((message) => message.role === 'user' || message.role === 'assistant')
+          .slice(-12)
+          .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.text}`)
+          .join('\n\n')
+        : '';
+      const effectivePrompt = conversationBridge
+        ? `<conversation_context_from_previous_model>\n${conversationBridge}\n</conversation_context_from_previous_model>\n\n${prompt}`
+        : prompt;
       const selectedModel = liveProfile.models.find((item) => item.id === model);
       const reasoningEffort = localStorage.getItem(`cutai:cli-effort:${projectId}:${liveProfile.id}`)
         || selectedModel?.defaultReasoningEffort;
-      const fileAccess = localStorage.getItem(`cutai:cli-file-access:${projectId}:${liveProfile.id}`) === 'workspace-write'
+      const agentSettings = loadAgentSettings();
+      const selectedFileAccess = localStorage.getItem(`cutai:cli-file-access:${projectId}:${liveProfile.id}`) === 'workspace-write'
         ? 'workspace-write' as const
         : 'proposal-only' as const;
+      const fileAccess = agentSettings.planMode ? 'proposal-only' as const : selectedFileAccess;
       const result = await desktop.runCliAgent({
         runId,
         profileId: liveProfile.id,
         projectId,
         projectRoot,
-        prompt,
-        sessionId: cliSessionId,
+        prompt: effectivePrompt,
+        // Claude/Codex keep the model on a resumed native thread. Start a new
+        // thread when the user changes model; otherwise the UI selection is
+        // silently ignored by the provider.
+        ...(cliSessionId && sessionModel === model ? { sessionId: cliSessionId } : {}),
         ...(model ? { model } : {}),
         ...(reasoningEffort ? { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
         fileAccess,
+        planMode: agentSettings.planMode,
       });
+      if (fileAccess === 'workspace-write' && onWorkspaceEdited) {
+        await onWorkspaceEdited();
+      }
       setCliSessionId(result.sessionId);
+      if (model) localStorage.setItem(sessionModelKey, model);
       setCliMessages((current) => {
         const next = [...current];
         const assistantIndex = next.findLastIndex((message) => message.role === 'assistant');

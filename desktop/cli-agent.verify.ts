@@ -13,6 +13,8 @@ const host = new CliAgentHost(join(temp, 'user-data'));
 const profiles = await host.profiles();
 assert.equal(profiles.some((profile) => profile.kind === 'claude'), true);
 assert.equal(profiles.some((profile) => profile.kind === 'codex'), true);
+assert.equal(profiles.find((profile) => profile.kind === 'claude')?.adapter, 'claude-agent-sdk');
+assert.equal(profiles.find((profile) => profile.kind === 'codex')?.adapter, 'codex-sdk');
 
 for (const profile of profiles.filter((item) => item.compatible)) {
   assert.equal(profile.executable.toLowerCase().endsWith('.exe'), true);

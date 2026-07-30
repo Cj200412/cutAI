@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { issueWorkspaceCliToken } from './workspace-project.ts';
+import { runClaudeSdk, runCodexSdk } from './cli-agent-sdk.ts';
 
 export type CliAgentKind = 'claude' | 'codex' | 'custom-acp';
 export type CliReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -29,7 +30,7 @@ export interface CliAgentProfile {
   kind: CliAgentKind;
   name: string;
   executable: string;
-  adapter: 'claude-stream-json' | 'codex-jsonl' | 'acp-stdio';
+  adapter: 'claude-agent-sdk' | 'codex-sdk' | 'acp-stdio';
   version: string;
   compatible: boolean;
   reason?: string;
@@ -50,6 +51,7 @@ export interface CliRunRequest {
   model?: string;
   reasoningEffort?: CliReasoningEffort;
   fileAccess?: CliFileAccess;
+  planMode?: boolean;
 }
 
 export interface CliRunResult {
@@ -325,11 +327,15 @@ export class CliAgentHost {
   private readonly registryPath: string;
   private readonly sessionDir: string;
   private readonly processes = new Map<string, ChildProcessWithoutNullStreams>();
+  private readonly sdkRuns = new Map<string, AbortController>();
   private origin = '';
 
   constructor(userDataPath: string) {
     this.registryPath = join(userDataPath, 'cli-agents.json');
     this.sessionDir = join(userDataPath, 'cli-sessions');
+    // Keep the legacy bridge type-checked until custom ACP gets its own adapter;
+    // Claude and Codex never enter it after the SDK routing below.
+    void this.runCodexAppServer;
   }
 
   setOrigin(origin: string): void {
@@ -381,7 +387,7 @@ export class CliAgentHost {
         id: 'claude-local',
         kind: 'claude',
         name: 'Claude CLI',
-        adapter: 'claude-stream-json',
+        adapter: 'claude-agent-sdk',
         paths: unique([claudeRoot]),
         config: process.env.CLAUDE_CONFIG_DIR || (process.env.USERPROFILE ? join(process.env.USERPROFILE, '.claude') : undefined),
       },
@@ -389,7 +395,7 @@ export class CliAgentHost {
         id: 'codex-local',
         kind: 'codex',
         name: 'Codex CLI',
-        adapter: 'codex-jsonl',
+        adapter: 'codex-sdk',
         paths: unique([
           codexHome ? join(codexHome, '.sandbox-bin', 'codex.exe') : undefined,
           codexHome ? join(codexHome, 'plugins', '.plugin-appserver', 'codex.exe') : undefined,
@@ -724,10 +730,35 @@ export class CliAgentHost {
     if (!profile.authorizedRoots.map((value) => resolve(value)).includes(root)) {
       throw new Error('CLI access to this project has not been authorized');
     }
-    if (!this.origin) throw new Error('CutAI MCP origin is not ready');
     const runId = request.runId || randomUUID();
-    if (profile.kind === 'codex') {
-      return this.runCodexAppServer(profile, request, root, runId, onEvent);
+    if (profile.kind === 'claude' || profile.kind === 'codex') {
+      const controller = new AbortController();
+      this.sdkRuns.set(runId, controller);
+      try {
+        const result = profile.kind === 'claude'
+          ? await runClaudeSdk(profile, request, runId, controller, onEvent)
+          : await runCodexSdk(profile, request, runId, controller, onEvent);
+        await this.appendWorkspaceRecord(root, 'sessions', `${profile.id}.jsonl`, {
+          type: 'sdk_turn',
+          at: new Date().toISOString(),
+          runId,
+          sessionId: result.sessionId,
+          profileId: profile.id,
+          adapter: profile.adapter,
+          prompt: request.prompt,
+          response: result.text,
+          reasoning: result.reasoning,
+          fileAccess: request.fileAccess ?? 'proposal-only',
+          usage: result.usage,
+        });
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onEvent?.({ runId, type: 'error', message });
+        throw error;
+      } finally {
+        this.sdkRuns.delete(runId);
+      }
     }
     const args = await this.argsFor(profile, request, runId);
     const emit = (event: CliStreamPayload): void => onEvent?.({ runId, ...event });
@@ -831,6 +862,12 @@ export class CliAgentHost {
   }
 
   cancel(runId: string): boolean {
+    const sdkRun = this.sdkRuns.get(runId);
+    if (sdkRun) {
+      sdkRun.abort();
+      this.sdkRuns.delete(runId);
+      return true;
+    }
     const child = this.processes.get(runId);
     if (!child) return false;
     terminateProcessTree(child);
@@ -839,6 +876,8 @@ export class CliAgentHost {
   }
 
   close(): void {
+    for (const controller of this.sdkRuns.values()) controller.abort();
+    this.sdkRuns.clear();
     for (const child of this.processes.values()) terminateProcessTree(child);
     this.processes.clear();
   }
