@@ -73,6 +73,7 @@ export interface CliRunRequest {
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   fileAccess?: 'proposal-only' | 'workspace-write';
   planMode?: boolean;
+  forkSession?: boolean;
 }
 
 export type CliStreamEvent =

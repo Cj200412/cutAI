@@ -158,7 +158,7 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
       />}
       {msg.actualModel && (
         <div style={{ marginBottom: 6, color: theme.textDim, fontSize: 10.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-          实际模型：{msg.actualModel}{msg.requestedModel ? ` · 选择：${msg.requestedModel}` : ''}
+          SDK 会话模型：{msg.actualModel}{msg.requestedModel ? ` · 选择：${msg.requestedModel}` : ''}
         </div>
       )}
       {segments.map((seg, i) =>

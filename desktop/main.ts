@@ -166,6 +166,7 @@ function registerDesktopHandlers(secrets: CutaiSecretStore, cliAgents: CliAgentH
       ...(typeof row.reasoningEffort === 'string' ? { reasoningEffort: row.reasoningEffort } : {}),
       ...(row.fileAccess === 'workspace-write' ? { fileAccess: row.fileAccess } : {}),
       ...(row.planMode === true ? { planMode: true } : {}),
+      ...(row.forkSession === true ? { forkSession: true } : {}),
     }, (streamEvent) => {
       if (!event.sender.isDestroyed()) event.sender.send('cutai:cli-event', streamEvent);
     });

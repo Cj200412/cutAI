@@ -224,6 +224,7 @@ export async function runClaudeSdk(
         tools: ['Read', 'Glob', 'Grep'],
       }),
       ...(request.sessionId ? { resume: request.sessionId } : {}),
+      ...(request.sessionId && request.forkSession ? { forkSession: true } : {}),
       ...(request.model ? { model: request.model } : {}),
       ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
     },

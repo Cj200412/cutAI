@@ -53,6 +53,7 @@ export interface CliRunRequest {
   reasoningEffort?: CliReasoningEffort;
   fileAccess?: CliFileAccess;
   planMode?: boolean;
+  forkSession?: boolean;
 }
 
 export interface CliRunResult {

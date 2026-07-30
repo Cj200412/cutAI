@@ -75,7 +75,8 @@ declare global {
     model?: string;
     reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   fileAccess?: 'proposal-only' | 'workspace-write';
-  planMode?: boolean;
+      planMode?: boolean;
+      forkSession?: boolean;
   }
 
   type CliStreamEvent =

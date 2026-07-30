@@ -306,6 +306,7 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         // session. Codex threads remain model-bound and use the context bridge.
         ...(cliSessionId && (sessionModel === model || canSwitchModelInSession) ? { sessionId: cliSessionId } : {}),
         ...(model ? { model } : {}),
+        ...(modelChanged && canSwitchModelInSession ? { forkSession: true } : {}),
         ...(reasoningEffort ? { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
         fileAccess,
         planMode: agentSettings.planMode,

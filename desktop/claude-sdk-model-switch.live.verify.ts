@@ -17,26 +17,29 @@ if (!profile.authorizedRoots.includes(root)) {
   await host.authorize(profile.id, root, profile.fingerprint);
 }
 
-const aliases = ['haiku', 'opus', 'fable', 'sonnet'].filter((id) => profile.models.some((model) => model.id === id));
+const aliases = ['sonnet', 'haiku', 'opus', 'fable', 'sonnet'].filter((id) => profile.models.some((model) => model.id === id));
 assert.ok(aliases.length >= 2, 'at least two Claude model aliases are required');
 let sessionId: string | undefined;
 const actualModels: string[] = [];
 for (const [index, model] of aliases.entries()) {
+  const previousSessionId = sessionId;
   const result = await host.run({
     profileId: profile.id,
     projectId,
     projectRoot: root,
     prompt: `Reply with exactly MODEL_SWITCH_${index + 1}_OK and do not use tools.`,
     ...(sessionId ? { sessionId } : {}),
+    ...(sessionId ? { forkSession: true } : {}),
     model,
     fileAccess: 'proposal-only',
   });
   assert.equal(result.text.includes(`MODEL_SWITCH_${index + 1}_OK`), true);
-  if (sessionId) assert.equal(result.sessionId, sessionId, 'model switch must preserve the Claude session');
+  if (previousSessionId) assert.notEqual(result.sessionId, previousSessionId, 'model switch must fork the persisted Claude session');
   sessionId = result.sessionId;
   assert.ok(result.actualModel);
   actualModels.push(result.actualModel);
 }
-assert.equal(new Set(actualModels).size, aliases.length, 'every configured alias must select a distinct actual model');
+assert.equal(actualModels[0], actualModels.at(-1), 'switching back to Sonnet must restore the original model');
+assert.equal(new Set(actualModels).size, new Set(aliases).size, 'every configured alias must select a distinct actual model');
 
 console.log(`claude-sdk-model-switch.live.verify: ok (${aliases.map((alias, index) => `${alias}=${actualModels[index]}`).join(', ')}, session ${sessionId})`);
