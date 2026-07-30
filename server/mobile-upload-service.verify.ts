@@ -11,12 +11,13 @@ assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), true);
 assert.equal(isLoopbackAddress('192.168.1.20'), false);
 
 const tempDir = await mkdtemp(join(tmpdir(), 'openchatcut-mobile-upload-'));
+const sessionTtlMs = 1_000;
 const service = new MobileUploadService({
   bindHost: '127.0.0.1',
   addresses: () => ['127.0.0.1'],
   uploadDirectory: () => tempDir,
   maxBytes: 16,
-  sessionTtlMs: 200,
+  sessionTtlMs,
 });
 
 try {
@@ -91,7 +92,7 @@ try {
   assert.equal(service.getSession(session.id), null);
   assert.equal((await fetch(session.urls[0]!)).status, 404);
 
-  await new Promise((resolve) => setTimeout(resolve, 230));
+  await new Promise((resolve) => setTimeout(resolve, sessionTtlMs + 30));
   assert.equal(service.getSession(englishSession.id), null);
 } finally {
   await service.stop();

@@ -1,6 +1,6 @@
 import type { MinimaxLanguageBoost } from '../../shared/media-provider-params.ts';
 
-export type VoiceProvider = 'elevenlabs' | 'doubao' | 'minimax';
+export type VoiceProvider = 'elevenlabs' | 'doubao' | 'minimax' | 'custom';
 export type MinimaxVoiceFormat = 'mp3' | 'pcm' | 'flac' | 'wav' | 'pcmu_raw' | 'pcmu_wav' | 'opus';
 export type VoiceEffect = 'spacious_echo' | 'auditorium_echo' | 'lofi_telephone' | 'robotic';
 
@@ -15,6 +15,10 @@ export interface VoiceOptions {
   minimaxBaseUrl: string;
   minimaxApiKey: string;
   minimaxModel: string;
+  customBaseUrl: string;
+  customApiKey: string;
+  customModel: string;
+  customVoice: string;
 }
 
 export interface VoiceRequest {

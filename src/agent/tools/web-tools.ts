@@ -205,7 +205,7 @@ async function postApi(path: string, body: Record<string, unknown>): Promise<Rec
   } catch (e) {
     return {
       error: `request failed: ${e instanceof Error ? e.message : String(e)}`,
-      hint: 'Is the Vite dev server running with FIRECRAWL_API_KEY?',
+      hint: 'Open Settings → Enhanced tools → Web scraping and configure a Firecrawl cloud key or self-hosted API URL.',
     };
   }
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -216,7 +216,7 @@ function configError(data: Record<string, unknown>): unknown | null {
     return {
       error: data.error ?? 'Firecrawl not configured',
       configured: false,
-      hint: 'Set FIRECRAWL_API_KEY in .env.local and restart Vite.',
+      hint: 'Configure FIRECRAWL_API_KEY or FIRECRAWL_BASE_URL in settings; saved settings take effect immediately.',
     };
   }
   if (data.ok === false || (data.error && data.ok !== true && !data.results && !data.pages && !data.links && !data.markdown)) {

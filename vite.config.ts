@@ -19,10 +19,12 @@ export default defineConfig(({ mode }) => {
   const transcriptionProvider = normalizeTranscriptionProvider(env.PREFERRED_TRANSCRIPTION_VENDOR);
   const customTranscriptionBaseUrl = env.TRANSCRIPTION_CUSTOM_BASE_URL || '';
   const imageKey = env.IMAGE_API_KEY || env.OPENAI_API_KEY || '';
+  const imageBaseUrl = env.IMAGE_BASE_URL || '';
   const geminiKey = env.GEMINI_API_KEY || '';
   const elevenKey = env.ELEVENLABS_API_KEY || '';
   const doubaoAppId = env.DOUBAO_TTS_APP_ID || '';
   const doubaoAccessKey = env.DOUBAO_TTS_ACCESS_KEY || '';
+  const customVoiceBaseUrl = env.VOICE_CUSTOM_BASE_URL || '';
   const murekaKey = env.MUREKA_API_KEY || '';
   // MiniMax 国内开放平台 — one key gates TTS / Hailuo video / music / image.
   const minimaxKey = env.MINIMAX_API_KEY || '';
@@ -34,6 +36,7 @@ export default defineConfig(({ mode }) => {
   const freesoundKey = env.FREESOUND_API_KEY || '';
   // Firecrawl (web_browser tool): .env.local or shell export (e.g. search-apis.env)
   const firecrawlKey = env.FIRECRAWL_API_KEY || process.env.FIRECRAWL_API_KEY || '';
+  const firecrawlBaseUrl = env.FIRECRAWL_BASE_URL || process.env.FIRECRAWL_BASE_URL || '';
   const e2bKey = env.E2B_API_KEY || process.env.E2B_API_KEY || '';
   // E2B_TEMPLATE (+ its process.env fallback) is now read live via the keystore getter below.
 
@@ -43,17 +46,17 @@ export default defineConfig(({ mode }) => {
     // ONLY — no key value is ever exposed to the browser.
     define: {
       __CONFIGURED_CAPS__: JSON.stringify({
-        image: Boolean(imageKey || geminiKey || minimaxKey),
-        voice: Boolean((doubaoAppId && doubaoAccessKey) || elevenKey || minimaxKey),
+        image: Boolean(imageKey || imageBaseUrl || geminiKey || minimaxKey),
+        voice: Boolean((doubaoAppId && doubaoAccessKey) || elevenKey || minimaxKey || customVoiceBaseUrl),
         video: Boolean(seedanceKey || klingKey || minimaxKey),
         music: Boolean(murekaKey || minimaxKey),
         sound: Boolean(elevenKey),
-        stock: Boolean(pexelsKey || pixabayKey || unsplashKey || freesoundKey),
+        stock: Boolean(pexelsKey || pixabayKey || unsplashKey || freesoundKey || firecrawlKey || firecrawlBaseUrl),
         transcription: transcriptionProvider === 'local'
           || (transcriptionProvider === 'assemblyai' && Boolean(aaiKey))
           || (transcriptionProvider === 'custom' && Boolean(customTranscriptionBaseUrl)),
         sandbox: Boolean(e2bKey),
-        web: Boolean(firecrawlKey),
+        web: Boolean(firecrawlKey || firecrawlBaseUrl),
       }),
     },
     // public/ = user runtime only (media/uploads). Product static files live in assets/

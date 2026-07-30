@@ -44,12 +44,24 @@ export default {
   '可灵 Kling': 'Kling',
   'MiniMax 海螺': 'MiniMax Hailuo',
   '本地磁盘': 'Local Disk',
+  'OpenAI / 自定义兼容': 'OpenAI / Custom-compatible',
+  '自定义 OpenAI 兼容': 'Custom OpenAI-compatible',
+  'Pexels（免费 API）': 'Pexels (free API)',
+  'Pixabay（免费 API）': 'Pixabay (free API)',
+  'Unsplash（免费 Demo）': 'Unsplash (free demo)',
+  'Freesound（免费 Key）': 'Freesound (free key)',
+  '本地磁盘（免费）': 'Local Disk (free)',
+  'Cloudflare R2（含免费额度）': 'Cloudflare R2 (free tier included)',
+  'E2B（新用户试用额度）': 'E2B (new-user trial credit)',
+  'Firecrawl 云端 / 自托管': 'Firecrawl Cloud / Self-hosted',
   '本地模型': 'Local model',
   '推理设备': 'Inference device',
   '自动（优先 WebGPU）': 'Auto (prefer WebGPU)',
   'WebGPU（显卡）': 'WebGPU (GPU)',
   'WASM（CPU）': 'WASM (CPU)',
   'API Key（可选）': 'API Key (optional)',
+  '免费 API Key': 'Free API key',
+  '免费 Access Key': 'Free access key',
 
   // ── 能力组 hint ──
   '对话与工具调用的核心，未配置无法对话。': 'Core of chat and tool calls — chat is unavailable until configured.',
@@ -71,10 +83,14 @@ export default {
   '模型厂商': 'Model provider',
   '模型': 'Model',
   'API Base URL': 'API Base URL',
+  'API URL': 'API URL',
+  '自托管 API URL（可选）': 'Self-hosted API URL (optional)',
+  'API Key（云端必填，自托管可选）': 'API key (required for cloud, optional when self-hosted)',
   'API Key（gpt-image）': 'API Key (gpt-image)',
   'API Key（Nano Banana）': 'API Key (Nano Banana)',
   '生图模型': 'Image model',
   '配音模型': 'Voice model',
+  '默认音色': 'Default voice',
   '音效模型': 'Sound model',
   '音色资源 ID': 'Voice resource ID',
   '视频模型': 'Video model',
@@ -93,6 +109,29 @@ export default {
 
   // ── 页注 / 字段注 ──
   'MiniMax 同一个 Key，配置一次全能力（生图 / 配音 / 视频 / 音乐）通用。': 'One MiniMax key covers every capability (image / voice / video / music) — configure once.',
+  '支持 OpenAI /v1/images/generations 与 /v1/images/edits。可填写本地或自建兼容网关；不鉴权的本地服务可不填 Key。':
+    'Supports OpenAI /v1/images/generations and /v1/images/edits. You can use a local or self-hosted compatible gateway, and omit the key when it does not require authentication.',
+  '自定义服务填写 API 根地址；保存后请求由 CutAI 本地服务转发。':
+    'Enter the API root of the custom service. After saving, CutAI relays requests through its local server.',
+  '可填写 Gemini 兼容网关支持的模型 ID。': 'Enter any model ID supported by the Gemini-compatible gateway.',
+  '可填写 MiniMax 兼容网关支持的模型 ID。': 'Enter any model ID supported by the MiniMax-compatible gateway.',
+  '可填写 ElevenLabs 兼容网关支持的模型 ID。': 'Enter any model ID supported by the ElevenLabs-compatible gateway.',
+  '调用 POST /v1/audio/speech，适用于 LocalAI、自建 TTS 网关或其它 OpenAI 兼容服务；本地无鉴权服务可不填 Key。':
+    'Calls POST /v1/audio/speech for LocalAI, self-hosted TTS gateways, or other OpenAI-compatible services. Omit the key for local services without authentication.',
+  '可填写 Seedance 协议兼容网关的模型 ID。': 'Enter any model ID supported by a Seedance-protocol-compatible gateway.',
+  '可填写 Kling 协议兼容网关的模型 ID。': 'Enter any model ID supported by a Kling-protocol-compatible gateway.',
+  '可填写 MiniMax 视频协议兼容网关的模型 ID。': 'Enter any model ID supported by a MiniMax-video-compatible gateway.',
+  '可填写 Mureka 协议兼容网关的模型 ID。': 'Enter any model ID supported by a Mureka-protocol-compatible gateway.',
+  '可自由填写模型 ID；带 -free 的模型由服务商决定额度和可用性，并非永久免费。':
+    'Enter any model ID. Availability and quotas for -free models are provider-defined and are not guaranteed to remain free.',
+  '官方 API 免费使用，但有每小时和每月请求上限；素材使用仍需遵守 Pexels 条款。':
+    'The official API is free, with hourly and monthly request limits. Media use remains subject to the Pexels terms.',
+  '官方 API 可免费申请，默认有频率限制，并要求在结果中注明素材来源。':
+    'The official API is free to request, has a default rate limit, and requires identifying Pixabay as the media source.',
+  'Demo 模式有免费请求额度；上线使用需遵守署名、热链和生产审核要求。':
+    'Demo mode includes a free request allowance. Production use must follow attribution, hotlinking, and review requirements.',
+  '注册后可申请 API 凭据；每条声音的具体许可证不同，导入前需检查素材授权。':
+    'Register to request API credentials. Each sound can use a different license, so check its terms before importing.',
   'Key 同时用于音效生成（submit_sound）。': 'The key is also used for sound-effect generation (submit_sound).',
   '可直接使用 Anthropic 官方 API Key；如使用兼容服务，再修改 Base URL 和模型。': 'Use an official Anthropic API key directly, or change the Base URL and model for a compatible service.',
   '默认使用 Claude Fable 5；自定义兼容地址时，也可填写该服务支持的模型 ID。': 'Claude Fable 5 is the default. With a compatible endpoint, enter any model ID supported by that service.',
@@ -116,12 +155,26 @@ export default {
     'The desktop app stores media in its system application-data directory by default; browser development uses public/media/uploads/. Choose any local folder or external drive. Saving copies media from the old directory to the new one (originals kept); project URLs stay unchanged, and preview, render, and export follow the new directory.',
   '桌面端点击“选择目录”；浏览器中也可手动输入绝对路径。清除后回到当前运行环境的默认目录。':
     'On desktop, click “Choose Folder”; in a browser, you can also enter an absolute path manually. Clearing returns to the current environment’s default directory.',
+  'R2 Standard 当前包含每月免费存储和操作额度，超出后按量计费；具体额度以 Cloudflare 官方价格页为准。':
+    'R2 Standard currently includes monthly free storage and operation allowances, with usage-based billing above them. Refer to Cloudflare pricing for current limits.',
+  'R2 Standard 当前包含每月免费存储和操作额度，超出后按量计费；具体额度以 Cloudflare 官方价格页为准。未配置时素材只存本机（「本地磁盘」页的目录）。配置后：每次上传同步写入 R2（桶保持私有，读取经本地服务回源，src 路径不变）；本机缺文件时自动从云端取回。改动即时生效。R2 控制台建桶 → R2 API Token（Object Read & Write）即可拿到下面四个值。':
+    'R2 Standard currently includes monthly free storage and operation allowances, with usage-based billing above them. Without this, media lives only on this machine (the Local Disk directory). Once configured, every upload also writes to R2 while the bucket stays private and CutAI handles reads; missing local files are fetched from the cloud automatically. Changes apply immediately. Create a bucket and an Object Read & Write R2 API Token to get the four values below.',
   '未配置时素材只存本机（「本地磁盘」页的目录）。配置后：每次上传同步写入 R2（桶保持私有，读取经本地服务回源，src 路径不变）；本机缺文件时自动从云端取回。改动即时生效。R2 控制台建桶 → R2 API Token（Object Read & Write）即可拿到下面四个值。':
     'Without this, media lives only on this machine (the Local Disk directory). Once configured: every upload also writes to R2 (bucket stays private, reads go through the local server, src paths unchanged); missing local files are fetched from the cloud automatically. Changes apply immediately. Create a bucket in the R2 console, then an R2 API Token (Object Read & Write) to get the four values below.',
   '停用后新上传只存本地（密钥保留、已上云文件不受影响）；重新启用即恢复写穿。': 'When off, new uploads stay local only (keys kept, files already in the cloud unaffected); re-enable to resume write-through.',
   '云端隔离 Linux 沙箱，不触碰本机文件。Agent 用它跑 run_code：ffprobe 探测素材时长 / 尺寸编码、ffmpeg 转码 / 抽帧 / 加工音视频、执行 node / python 技能脚本，结果回传后由本地工具应用到时间线。未配置只影响这些工具，剪辑与预览不受影响。':
     'An isolated Linux sandbox in the cloud — never touches local files. The Agent uses it for run_code: ffprobe to probe media duration / dimensions / codecs, ffmpeg to transcode / extract frames / process AV, and node / python skill scripts; results come back and local tools apply them to the timeline. Leaving it unset only affects these tools — editing and preview are unaffected.',
   '默认模板不带 ffmpeg；转码 / 抽帧类任务需自建含 ffmpeg 的模板并填其 ID。': 'The default template has no ffmpeg; for transcode / frame-extraction tasks, build a template with ffmpeg and enter its ID.',
+  'E2B 当前为按量计费，新用户有一次性试用额度，不是永久免费服务。':
+    'E2B is usage-based and gives new users a one-time trial credit; it is not a permanently free service.',
+  'E2B 当前为按量计费，新用户有一次性试用额度，不是永久免费服务。云端隔离 Linux 沙箱，不触碰本机文件。Agent 用它跑 run_code：ffprobe 探测素材时长 / 尺寸编码、ffmpeg 转码 / 抽帧 / 加工音视频、执行 node / python 技能脚本，结果回传后由本地工具应用到时间线。未配置只影响这些工具，剪辑与预览不受影响。':
+    'E2B is usage-based and gives new users a one-time trial credit; it is not permanently free. The isolated Linux sandbox never touches local files. The Agent uses it for run_code tasks such as ffprobe, ffmpeg, and Node or Python skill scripts; results return to local tools for timeline edits. Leaving it unset affects only these tools, not editing or preview.',
+  '云端服务填写 Key；免费自托管实例填写 API URL，Key 可留空。自托管的浏览器与高级提取能力取决于部署组件。':
+    'Enter a key for Firecrawl Cloud. For a free self-hosted instance, enter its API URL and leave the key blank. Browser and advanced extraction features depend on the deployed components.',
+  '可填写根地址、/v1 或 /v2；CutAI 会按请求自动选择对应版本。':
+    'You may enter the root URL, /v1, or /v2; CutAI selects the required version for each request.',
+  '例如 http://127.0.0.1:8000/v1': 'e.g. http://127.0.0.1:8000/v1',
+  '例如 http://127.0.0.1:3002': 'e.g. http://127.0.0.1:3002',
 
   // ── 厂商页状态 / 测试连接 / 字段渲染 ──
   '已配置': 'Configured',

@@ -61,6 +61,29 @@ export async function elevenLabsVoice(options: VoiceOptions, input: ValidVoiceRe
   return Buffer.from(await response.arrayBuffer());
 }
 
+export async function openAiCompatibleVoice(options: VoiceOptions, input: ValidVoiceRequest): Promise<Buffer> {
+  if (!options.customBaseUrl) {
+    throw new Error('Custom TTS is not configured. Set a compatible API URL in settings.');
+  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (options.customApiKey) headers.Authorization = `Bearer ${options.customApiKey}`;
+  const response = await fetch(`${options.customBaseUrl.replace(/\/+$/, '')}/audio/speech`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: input.modelId || options.customModel,
+      input: input.text,
+      voice: input.voiceId || options.customVoice,
+      response_format: input.outputFormat,
+      speed: input.speed ?? 1,
+    }),
+  });
+  if (!response.ok) throw new Error(await providerError(response));
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) throw new Error('Custom TTS returned empty audio');
+  return bytes;
+}
+
 function doubaoAudio(text: string): Buffer {
   const parts: Buffer[] = [];
   for (const line of text.split('\n')) {

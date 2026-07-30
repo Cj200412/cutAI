@@ -18,6 +18,8 @@ const INPUT_FIDELITIES = new Set(['low', 'high']);
 interface ImagePluginOptions {
   baseUrl: string;
   apiKey: string;
+  model: string;
+  allowUnauthenticated: boolean;
   geminiBaseUrl: string;
   geminiApiKey: string;
   geminiModel: string;
@@ -248,10 +250,16 @@ async function appendImageFile(form: FormData, field: string, path: string, file
   form.append(field, new Blob([bytes], { type: imageMimeType(file) }), `${filename}.${ext}`);
 }
 
-async function callProvider(baseUrl: string, apiKey: string, body: GptImageInput): Promise<ProviderImage[]> {
-  const endpoint = body.referencePaths.length ? '/v1/images/edits' : '/v1/images/generations';
+export async function callOpenAiCompatibleImage(
+  baseUrl: string,
+  apiKey: string,
+  body: GptImageInput,
+): Promise<ProviderImage[]> {
+  const root = baseUrl.trim().replace(/\/+$/, '');
+  const apiRoot = /\/v1$/i.test(root) ? root : `${root}/v1`;
+  const endpoint = body.referencePaths.length ? '/images/edits' : '/images/generations';
   let requestBody: string | FormData;
-  let headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  let headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 
   if (body.referencePaths.length) {
     const form = new FormData();
@@ -273,7 +281,7 @@ async function callProvider(baseUrl: string, apiKey: string, body: GptImageInput
     requestBody = JSON.stringify(json);
   }
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}${endpoint}`, { method: 'POST', headers, body: requestBody });
+  const response = await fetch(`${apiRoot}${endpoint}`, { method: 'POST', headers, body: requestBody });
   if (!response.ok) throw new Error(await providerError(response));
   const result = await response.json() as { data?: ProviderImage[] };
   if (!result.data?.length) throw new Error('image provider returned no images');
@@ -435,9 +443,11 @@ export function imageGenerationPlugin(options: ImagePluginOptions): Plugin {
               seed, referencePaths, promptOptimizer,
             });
           } else {
-            if (!options.apiKey) throw new Error('Image generation is not configured. Set IMAGE_API_KEY or OPENAI_API_KEY in .env.local.');
-            images = await callProvider(options.baseUrl, options.apiKey, {
-              model, prompt, quality, count, size: `${width}x${height}`, referencePaths, maskPath,
+            if (!options.apiKey && !options.allowUnauthenticated) {
+              throw new Error('Image generation is not configured. Set an API Key or a custom compatible API URL in settings.');
+            }
+            images = await callOpenAiCompatibleImage(options.baseUrl, options.apiKey, {
+              model: options.model, prompt, quality, count, size: `${width}x${height}`, referencePaths, maskPath,
               background, moderation, inputFidelity, outputFormat, outputCompression,
             });
           }

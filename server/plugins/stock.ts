@@ -1,5 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
+import { firecrawlApiBase } from '../../shared/firecrawl-config.ts';
 
 export interface StockPluginOptions {
   pexelsApiKey: string;
@@ -7,6 +8,7 @@ export interface StockPluginOptions {
   unsplashAccessKey?: string;
   freesoundApiKey?: string;
   firecrawlApiKey?: string;
+  firecrawlBaseUrl?: string;
 }
 
 export type StockPlatform = 'pexels' | 'pixabay' | 'unsplash' | 'freesound';
@@ -56,8 +58,6 @@ interface SearchJob {
 const ALL_PLATFORMS: StockPlatform[] = ['pexels', 'pixabay', 'unsplash', 'freesound'];
 const DEFAULT_LIMIT = 3;
 const MAX_LIMIT = 6;
-const FIRECRAWL_SEARCH_URL = 'https://api.firecrawl.dev/v2/search';
-
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -382,6 +382,7 @@ export function parseFirecrawlVideos(markdown: string, limit: number): StockResu
 async function searchFirecrawl(
   fetchImpl: FetchLike,
   apiKey: string,
+  configuredBaseUrl: string,
   query: string,
   kind: 'image' | 'video',
   orientation: StockOrientation | undefined,
@@ -395,9 +396,9 @@ async function searchFirecrawl(
         query: `${query} stock video`, sources: ['web'], includeDomains: ['pixabay.com'], limit: 2,
         scrapeOptions: { formats: ['markdown'], onlyMainContent: true },
       };
-  const res = await fetchImpl(FIRECRAWL_SEARCH_URL, {
+  const res = await fetchImpl(`${firecrawlApiBase(configuredBaseUrl, 'v2')}/search`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    headers: { ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30_000),
   });
@@ -457,10 +458,10 @@ export async function searchStockMedia(
         label: 'freesound/audio', platforms: ['freesound'],
         run: () => searchFreesound(fetchImpl, options.freesoundApiKey!, query, limit, kind === 'music'),
       });
-    } else if (options.firecrawlApiKey && target.kind === 'image'
+    } else if ((options.firecrawlApiKey || options.firecrawlBaseUrl) && target.kind === 'image'
       && (target.platform === 'pexels' || target.platform === 'pixabay')) {
       if (!missingFirecrawlImages.includes(target.platform)) missingFirecrawlImages.push(target.platform);
-    } else if (options.firecrawlApiKey && target.kind === 'video' && target.platform === 'pixabay') {
+    } else if ((options.firecrawlApiKey || options.firecrawlBaseUrl) && target.kind === 'video' && target.platform === 'pixabay') {
       missingFirecrawlVideo = true;
     } else {
       addUnavailableWarning(warnings, target);
@@ -471,14 +472,18 @@ export async function searchStockMedia(
     jobs.push({
       label: `firecrawl/${missingFirecrawlImages.join(',')}/image`, platforms: [...missingFirecrawlImages],
       run: () => searchFirecrawl(
-        fetchImpl, options.firecrawlApiKey!, query, 'image', orientation, limit, missingFirecrawlImages,
+        fetchImpl, options.firecrawlApiKey ?? '', options.firecrawlBaseUrl ?? '',
+        query, 'image', orientation, limit, missingFirecrawlImages,
       ),
     });
   }
   if (missingFirecrawlVideo) {
     jobs.push({
       label: 'firecrawl/pixabay/video', platforms: ['pixabay'],
-      run: () => searchFirecrawl(fetchImpl, options.firecrawlApiKey!, query, 'video', orientation, limit, ['pixabay']),
+      run: () => searchFirecrawl(
+        fetchImpl, options.firecrawlApiKey ?? '', options.firecrawlBaseUrl ?? '',
+        query, 'video', orientation, limit, ['pixabay'],
+      ),
     });
   }
 

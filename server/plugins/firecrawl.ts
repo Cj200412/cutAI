@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { firecrawlApiBase } from '../../shared/firecrawl-config.ts';
 
 /**
  * Firecrawl proxy (official API + web_browser scrape).
@@ -19,11 +20,11 @@ import { randomUUID } from 'node:crypto';
 
 const UPLOAD_DIR = join(process.cwd(), 'public', 'media', 'uploads');
 const FC_V1 = 'https://api.firecrawl.dev/v1';
-const FC_V2 = 'https://api.firecrawl.dev/v2';
 const MAX_BODY = 2 * 1024 * 1024;
 
 export interface FirecrawlPluginOptions {
   apiKey: string;
+  baseUrl: string;
 }
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -65,11 +66,11 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function notConfigured(res: ServerResponse, apiKey: string): boolean {
-  if (apiKey) return false;
+function notConfigured(res: ServerResponse, apiKey: string, baseUrl: string): boolean {
+  if (apiKey || baseUrl) return false;
   sendJson(res, 200, {
     configured: false,
-    error: 'FIRECRAWL_API_KEY not set (add to .env.local or export in shell)',
+    error: 'Firecrawl is not configured. Set a cloud API Key or a self-hosted API URL in settings.',
   });
   return true;
 }
@@ -83,7 +84,7 @@ async function fcFetch(
   const r = await fetch(`${base}${path}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       'Content-Type': 'application/json',
       ...(init?.headers ?? {}),
     },
@@ -191,6 +192,7 @@ async function handleScrape(
   body: Record<string, unknown>,
   res: ServerResponse,
   log: (m: string) => void,
+  configuredBaseUrl: string,
 ): Promise<void> {
   const url = String(body.url ?? '').trim();
   if (!url || !isHttpUrl(url)) {
@@ -228,7 +230,7 @@ async function handleScrape(
   const { ok, status, json } = await fcFetch(apiKey, '/scrape', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, firecrawlApiBase(configuredBaseUrl, 'v1'));
   if (!ok) {
     sendJson(res, 200, { configured: true, ok: false, error: fcError(json, status), status });
     return;
@@ -299,6 +301,7 @@ async function handleSearch(
   apiKey: string,
   body: Record<string, unknown>,
   res: ServerResponse,
+  configuredBaseUrl: string,
 ): Promise<void> {
   const query = String(body.query ?? '').trim();
   if (!query) {
@@ -331,7 +334,7 @@ async function handleSearch(
   const { ok, status, json } = await fcFetch(apiKey, '/search', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, firecrawlApiBase(configuredBaseUrl, 'v1'));
   if (!ok) {
     sendJson(res, 200, { configured: true, ok: false, error: fcError(json, status), status });
     return;
@@ -374,6 +377,7 @@ async function handleMap(
   apiKey: string,
   body: Record<string, unknown>,
   res: ServerResponse,
+  configuredBaseUrl: string,
 ): Promise<void> {
   const url = String(body.url ?? '').trim();
   if (!url || !isHttpUrl(url)) {
@@ -402,7 +406,7 @@ async function handleMap(
   const { ok, status, json } = await fcFetch(apiKey, '/map', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, firecrawlApiBase(configuredBaseUrl, 'v1'));
   if (!ok) {
     sendJson(res, 200, { configured: true, ok: false, error: fcError(json, status), status });
     return;
@@ -437,6 +441,7 @@ async function handleCrawl(
   body: Record<string, unknown>,
   res: ServerResponse,
   log: (m: string) => void,
+  configuredBaseUrl: string,
 ): Promise<void> {
   const url = String(body.url ?? '').trim();
   if (!url || !isHttpUrl(url)) {
@@ -488,10 +493,11 @@ async function handleCrawl(
   }
   if (crawlEntireDomain) payload.crawlEntireDomain = true;
 
+  const apiBase = firecrawlApiBase(configuredBaseUrl, 'v1');
   const start = await fcFetch(apiKey, '/crawl', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, apiBase);
   if (!start.ok) {
     sendJson(res, 200, {
       configured: true,
@@ -519,7 +525,7 @@ async function handleCrawl(
 
   while (Date.now() < deadline) {
     await sleep(pollMs);
-    const st = await fcFetch(apiKey, `/crawl/${encodeURIComponent(jobId)}`, { method: 'GET' });
+    const st = await fcFetch(apiKey, `/crawl/${encodeURIComponent(jobId)}`, { method: 'GET' }, apiBase);
     if (!st.ok) {
       sendJson(res, 200, {
         configured: true,
@@ -582,6 +588,7 @@ async function handleBatchScrape(
   body: Record<string, unknown>,
   res: ServerResponse,
   log: (m: string) => void,
+  configuredBaseUrl: string,
 ): Promise<void> {
   const rawUrls = Array.isArray(body.urls) ? body.urls : [];
   const urls = rawUrls
@@ -613,10 +620,11 @@ async function handleBatchScrape(
   };
 
   // Official batch is v2
+  const apiBase = firecrawlApiBase(configuredBaseUrl, 'v2');
   const start = await fcFetch(apiKey, '/batch/scrape', {
     method: 'POST',
     body: JSON.stringify(payload),
-  }, FC_V2);
+  }, apiBase);
   if (!start.ok) {
     sendJson(res, 200, {
       configured: true,
@@ -655,7 +663,7 @@ async function handleBatchScrape(
       apiKey,
       `/batch/scrape/${encodeURIComponent(jobId)}`,
       { method: 'GET' },
-      FC_V2,
+      apiBase,
     );
     if (!st.ok) {
       sendJson(res, 200, {
@@ -733,17 +741,17 @@ export function firecrawlPlugin(options: FirecrawlPluginOptions): Plugin {
     name: 'openchatcut-firecrawl',
     configureServer(server) {
       const log = (m: string) => server.config.logger.info(m);
-      const key = options.apiKey;
-
       server.middlewares.use('/api/web-browser', async (req, res) => {
         if (req.method !== 'POST') {
           sendJson(res, 405, { error: 'method not allowed — use POST' });
           return;
         }
         try {
-          if (notConfigured(res, key)) return;
+          const key = options.apiKey;
+          const baseUrl = options.baseUrl;
+          if (notConfigured(res, key, baseUrl)) return;
           const body = (await readJsonBody(req)) as Record<string, unknown>;
-          await handleScrape(key, body, res, log);
+          await handleScrape(key, body, res, log, baseUrl);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[web-browser] ${message}`);
@@ -757,9 +765,11 @@ export function firecrawlPlugin(options: FirecrawlPluginOptions): Plugin {
           return;
         }
         try {
-          if (notConfigured(res, key)) return;
+          const key = options.apiKey;
+          const baseUrl = options.baseUrl;
+          if (notConfigured(res, key, baseUrl)) return;
           const body = (await readJsonBody(req)) as Record<string, unknown>;
-          await handleSearch(key, body, res);
+          await handleSearch(key, body, res, baseUrl);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[firecrawl/search] ${message}`);
@@ -773,9 +783,11 @@ export function firecrawlPlugin(options: FirecrawlPluginOptions): Plugin {
           return;
         }
         try {
-          if (notConfigured(res, key)) return;
+          const key = options.apiKey;
+          const baseUrl = options.baseUrl;
+          if (notConfigured(res, key, baseUrl)) return;
           const body = (await readJsonBody(req)) as Record<string, unknown>;
-          await handleMap(key, body, res);
+          await handleMap(key, body, res, baseUrl);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[firecrawl/map] ${message}`);
@@ -789,9 +801,11 @@ export function firecrawlPlugin(options: FirecrawlPluginOptions): Plugin {
           return;
         }
         try {
-          if (notConfigured(res, key)) return;
+          const key = options.apiKey;
+          const baseUrl = options.baseUrl;
+          if (notConfigured(res, key, baseUrl)) return;
           const body = (await readJsonBody(req)) as Record<string, unknown>;
-          await handleCrawl(key, body, res, log);
+          await handleCrawl(key, body, res, log, baseUrl);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[firecrawl/crawl] ${message}`);
@@ -805,9 +819,11 @@ export function firecrawlPlugin(options: FirecrawlPluginOptions): Plugin {
           return;
         }
         try {
-          if (notConfigured(res, key)) return;
+          const key = options.apiKey;
+          const baseUrl = options.baseUrl;
+          if (notConfigured(res, key, baseUrl)) return;
           const body = (await readJsonBody(req)) as Record<string, unknown>;
-          await handleBatchScrape(key, body, res, log);
+          await handleBatchScrape(key, body, res, log, baseUrl);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           server.config.logger.error(`[firecrawl/batch] ${message}`);

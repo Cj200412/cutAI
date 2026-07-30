@@ -74,9 +74,10 @@ assert.equal(getKey('LLM_API_KEY'), 'secret-abc', 'getKey returns the live value
 // SECRET 值仍然绝不出现在任何响应里 ──
 const MODEL_ROUTING_NAMES = [
   'LLM_PROVIDER', 'LLM_MODEL', 'LLM_OPENAI_API_MODE',
-  'GEMINI_IMAGE_MODEL', 'ELEVENLABS_TTS_MODEL', 'ELEVENLABS_SOUND_MODEL',
+  'IMAGE_BASE_URL', 'IMAGE_MODEL', 'GEMINI_IMAGE_MODEL', 'ELEVENLABS_TTS_MODEL', 'ELEVENLABS_SOUND_MODEL',
   'DOUBAO_TTS_RESOURCE_ID', 'SEEDANCE_VIDEO_MODEL', 'KLING_VIDEO_MODEL', 'MUREKA_MUSIC_MODEL',
   'MINIMAX_TTS_MODEL', 'MINIMAX_VIDEO_MODEL', 'MINIMAX_MUSIC_MODEL', 'MINIMAX_IMAGE_MODEL',
+  'VOICE_CUSTOM_BASE_URL', 'VOICE_CUSTOM_MODEL', 'VOICE_CUSTOM_VOICE', 'FIRECRAWL_BASE_URL',
   'TRANSCRIPTION_LOCAL_MODEL', 'TRANSCRIPTION_LOCAL_DEVICE', 'TRANSCRIPTION_CUSTOM_BASE_URL', 'TRANSCRIPTION_CUSTOM_MODEL',
   'PREFERRED_IMAGE_VENDOR', 'PREFERRED_VOICE_VENDOR', 'PREFERRED_VIDEO_VENDOR', 'PREFERRED_MUSIC_VENDOR',
   'PREFERRED_TRANSCRIPTION_VENDOR',
@@ -125,5 +126,21 @@ assert.equal(st3.models.PREFERRED_TRANSCRIPTION_VENDOR, 'local');
 assert.equal(st3.models.TRANSCRIPTION_LOCAL_MODEL, 'onnx-community/whisper-base');
 assert.ok(!('TRANSCRIPTION_CUSTOM_API_KEY' in st3.models), 'custom transcription key stays secret');
 assert.ok(!JSON.stringify(st3).includes('custom-secret'), 'custom transcription key never leaks');
+
+seedKeystore({
+  IMAGE_BASE_URL: 'http://127.0.0.1:8188',
+  IMAGE_MODEL: 'local-image-model',
+  VOICE_CUSTOM_BASE_URL: 'http://127.0.0.1:8000/v1',
+  VOICE_CUSTOM_MODEL: 'local-tts',
+  VOICE_CUSTOM_VOICE: 'zh-default',
+  FIRECRAWL_BASE_URL: 'http://127.0.0.1:3002',
+} as Record<string, string>);
+const st4 = keyStatus();
+assert.equal(st4.caps.image, true, 'custom image URL enables image without a cloud key');
+assert.equal(st4.caps.voice, true, 'custom TTS URL enables voice without a cloud key');
+assert.equal(st4.caps.web, true, 'self-hosted Firecrawl URL enables web without a cloud key');
+assert.equal(st4.models.IMAGE_MODEL, 'local-image-model');
+assert.equal(st4.models.VOICE_CUSTOM_VOICE, 'zh-default');
+assert.equal(st4.models.FIRECRAWL_BASE_URL, 'http://127.0.0.1:3002');
 
 console.log('keystore.verify: ok');

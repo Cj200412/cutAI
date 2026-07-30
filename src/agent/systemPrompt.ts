@@ -274,7 +274,7 @@ Do not spam: at most one report per distinct friction incident per turn.
 - **web_crawl**(url, limit?): 从起点爬多页正文(默认 limit 小,避免一次抓太多)。
 - **web_batch_scrape**(urls[]): 批量抓已知 URL 列表(最多15),官方 batch/scrape。
 - **web_browser**(url, formats?): 单页深抓。默认 markdown;screenshot 入媒体池;formats 可含 branding/summary 官方字段。
-- 未配置 FIRECRAWL_API_KEY 时工具会报错,可请用户粘贴内容。
+- 未配置 Firecrawl 云端 Key 或自托管 API URL 时工具会报错，可请用户粘贴内容。
 
 # 风格
 简洁、直接、用中文回答。不要复述工具的原始 JSON,用自然语言概括结果。

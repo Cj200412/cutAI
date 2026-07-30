@@ -21,6 +21,7 @@ import {
   DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
   trimApiBaseUrl,
 } from '../shared/transcription-providers.ts';
+import { firecrawlApiBase } from '../shared/firecrawl-config.ts';
 
 export interface ProbeResult {
   ok: boolean;
@@ -124,10 +125,18 @@ export const PROBES: Record<string, ProbeDef> = {
     llmProbe(preset.id),
   ])),
   'image/openai': {
-    needs: [['IMAGE_API_KEY'], ['OPENAI_API_KEY']],
-    run: (get) => fetch(`${base(get, 'IMAGE_BASE_URL', 'https://api.openai.com')}/v1/models`, {
-      signal: t(), headers: bearer(get('IMAGE_API_KEY') || get('OPENAI_API_KEY')),
-    }),
+    needs: [['IMAGE_API_KEY'], ['OPENAI_API_KEY'], ['IMAGE_BASE_URL']],
+    run: (get) => {
+      const root = base(get, 'IMAGE_BASE_URL', 'https://api.openai.com');
+      const apiRoot = /\/v1$/i.test(root) ? root : `${root}/v1`;
+      return fetch(`${apiRoot}/models`, {
+        signal: t(),
+        headers: get('IMAGE_API_KEY') || get('OPENAI_API_KEY')
+          ? bearer(get('IMAGE_API_KEY') || get('OPENAI_API_KEY'))
+          : {},
+      });
+    },
+    models: parseModelCatalog,
   },
   'image/gemini': {
     needs: [['GEMINI_API_KEY']],
@@ -160,6 +169,15 @@ export const PROBES: Record<string, ProbeDef> = {
     }),
   },
   'voice/minimax': minimaxProbe,
+  'voice/custom': {
+    needs: [['VOICE_CUSTOM_BASE_URL']],
+    run: (get) => {
+      const root = base(get, 'VOICE_CUSTOM_BASE_URL', '');
+      const key = get('VOICE_CUSTOM_API_KEY');
+      return fetch(`${root}/models`, { signal: t(), headers: key ? bearer(key) : {} });
+    },
+    models: parseModelCatalog,
+  },
   'video/seedance': {
     needs: [['SEEDANCE_API_KEY']],
     run: (get) => fetch(`${base(get, 'SEEDANCE_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')}/contents/generations/tasks?page_num=1&page_size=1`, {
@@ -244,10 +262,23 @@ export const PROBES: Record<string, ProbeDef> = {
     }),
   },
   'web/firecrawl': {
-    needs: [['FIRECRAWL_API_KEY']],
-    run: (get) => fetch('https://api.firecrawl.dev/v2/team/credit-usage', {
-      signal: t(), headers: bearer(get('FIRECRAWL_API_KEY')),
-    }),
+    needs: [['FIRECRAWL_API_KEY'], ['FIRECRAWL_BASE_URL']],
+    run: (get) => {
+      const key = get('FIRECRAWL_API_KEY');
+      const configuredBaseUrl = get('FIRECRAWL_BASE_URL');
+      if (!configuredBaseUrl) {
+        return fetch('https://api.firecrawl.dev/v2/team/credit-usage', {
+          signal: t(), headers: bearer(key),
+        });
+      }
+      return fetch(`${firecrawlApiBase(configuredBaseUrl, 'v1')}/scrape`, {
+        method: 'POST',
+        signal: t(),
+        headers: { 'Content-Type': 'application/json', ...(key ? bearer(key) : {}) },
+        body: JSON.stringify({ url: 'https://example.com', formats: ['markdown'], onlyMainContent: true }),
+      });
+    },
+    okText: () => 'Firecrawl 可用（云端或自托管实例）',
   },
   // S3 HeadBucket 经 SDK 发出(SigV4 签名没法手拼 fetch),r2.ts 合成 Response:
   // 200=桶在且鉴权过;403/404 走 classifyStatus;网络层原样抛给 networkMessage。

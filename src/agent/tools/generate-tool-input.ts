@@ -92,9 +92,18 @@ function minimaxVoice(args: GenerateArgs): SubmitVoiceArgs {
   };
 }
 
-const VOICE_STRATEGIES = { elevenlabs: elevenVoice, doubao: doubaoVoice, minimax: minimaxVoice } as const;
+const customVoice = (args: GenerateArgs): SubmitVoiceArgs => ({
+  ...voiceBase(args, 'custom'),
+  modelId: str(args.modelId),
+  speed: num(args.speed),
+  outputFormat: str(args.outputFormat),
+});
+
+const VOICE_STRATEGIES = { elevenlabs: elevenVoice, doubao: doubaoVoice, minimax: minimaxVoice, custom: customVoice } as const;
 export function buildSubmitVoiceArgs(args: GenerateArgs): SubmitVoiceArgs {
-  const provider = args.provider === 'doubao' || args.provider === 'minimax' ? args.provider : 'elevenlabs';
+  const provider = args.provider === 'doubao' || args.provider === 'minimax' || args.provider === 'custom'
+    ? args.provider
+    : 'elevenlabs';
   return VOICE_STRATEGIES[provider](args);
 }
 

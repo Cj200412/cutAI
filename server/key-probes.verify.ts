@@ -3,13 +3,14 @@
 import assert from 'node:assert/strict';
 import { PROBES, classifyStatus, makeGetter, minimaxPostCheck, networkMessage, runProbe } from './key-probes.ts';
 import { LLM_PROVIDER_PRESETS } from '../shared/llm-providers.ts';
+import { firecrawlApiBase, firecrawlRoot } from '../shared/firecrawl-config.ts';
 
 // 1. 与 settingsSchema 的厂商页一一对应(page key 同名);llm 页随 preset 推导,
 //    其余能力页加页时同步这份清单。
 const EXPECTED_PAGES = [
   ...LLM_PROVIDER_PRESETS.map((preset) => `llm/${preset.id}`),
   'image/openai', 'image/gemini', 'image/minimax',
-  'voice/elevenlabs', 'voice/doubao', 'voice/minimax',
+  'voice/elevenlabs', 'voice/doubao', 'voice/minimax', 'voice/custom',
   'video/seedance', 'video/kling', 'video/hailuo',
   'music/mureka', 'music/minimax',
   'stock/pexels', 'stock/pixabay', 'stock/unsplash', 'stock/freesound',
@@ -20,6 +21,9 @@ const EXPECTED_PAGES = [
 ];
 for (const page of EXPECTED_PAGES) assert.ok(PROBES[page], `probe missing for ${page}`);
 assert.equal(Object.keys(PROBES).length, EXPECTED_PAGES.length, 'PROBES 有清单外的多余页');
+assert.equal(firecrawlApiBase('http://127.0.0.1:3002', 'v1'), 'http://127.0.0.1:3002/v1');
+assert.equal(firecrawlApiBase('http://127.0.0.1:3002/v1/', 'v2'), 'http://127.0.0.1:3002/v2');
+assert.equal(firecrawlRoot('http://127.0.0.1:3002/v2'), 'http://127.0.0.1:3002');
 
 // 2. override 白名单:白名单外丢弃、空值不覆盖、值会 trim。
 {

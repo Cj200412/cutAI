@@ -149,8 +149,8 @@ OpenChatCut 是 **开源 ChatCut 替代方案**：把 **对话式 Agent** 和 **
 | 文字稿 | AssemblyAI、本地 Whisper 或 OpenAI 兼容自定义服务，支持词级编辑、停顿压缩、查找、说话人和片段视图 |
 | 字幕 | 自动字幕、命名样式、翻译、时间线 overlay、SRT 导出 |
 | MG | 内置动态图形模板、安全沙箱、自定义模板与视频化 |
-| AI 生成 | 图片、视频、语音、音乐和音效任务，支持进度追踪 |
-| 素材 | 上传、文件夹、在线图片/视频/音频检索、Firecrawl 视觉素材兜底 |
+| AI 生成 | 图片、视频、语音、音乐和音效任务，支持进度追踪；图片和 TTS 可接 OpenAI 兼容自定义接口，视频与音乐可填写协议兼容网关的模型 ID |
+| 素材 | 上传、文件夹、Pexels / Pixabay / Unsplash / Freesound 在线检索，以及 Firecrawl 云端或自托管视觉素材兜底 |
 | 导出 | MP4、音频、字幕、FCPXML、工程导入导出、导出历史、硬件感知的 H.264 加速和资源感知的导出排队 |
 | Agent | 内置对话 Agent、技能系统、提案式编辑、外部 Streamable HTTP MCP |
 
@@ -203,6 +203,8 @@ http://localhost:5199
 
 `.env.local` 中只需填写你实际使用的模型或素材服务。没有配置的第三方能力会明确提示缺少对应 Key，不影响本地时间线编辑、内置素材和已配置的其他能力。
 
+也可以直接在「设置」中接入本地或自建服务：生图支持 OpenAI 兼容的 `/v1/images/generations` 与 `/v1/images/edits`，配音支持 `/v1/audio/speech`，转写支持 `/v1/audio/transcriptions`，Firecrawl 支持云端 Key 或自托管 API URL。无鉴权的本地兼容服务可不填 Key；视频和音乐厂商协议并不统一，因此对应页面提供可自由填写的 Base URL 与模型 ID，而不把不同协议误当成通用 OpenAI 接口。
+
 本地 H.264 导出会在 macOS 上优先使用 VideoToolbox，在兼容的 Windows 设备上优先使用 NVENC，失败时自动回退软件编码。可用 `OPENCHATCUT_RENDER_CONCURRENCY` 和 `OPENCHATCUT_MAX_ACTIVE_EXPORTS` 调整渲染并发及重型导出上限，用 `OPENCHATCUT_DISABLE_HARDWARE_ENCODING` 关闭硬件编码，或用 `OPENCHATCUT_H264_ENCODER` 覆盖 FFmpeg 侧的编码器选择；详见 [`.env.example`](.env.example)。
 
 ### 桌面端开发
@@ -219,7 +221,7 @@ npm run desktop:dev
 
 OpenChatCut 目前处于积极开发阶段，编辑器、工程格式和 Agent 工具仍会持续迭代。预构建的 macOS、Windows 与 Linux 安装包已发布到 [GitHub Releases](https://github.com/0xsline/OpenChatCut/releases)；开发和排障时，从源码运行仍是最透明的方式。
 
-基础时间线、本地工程、内置素材和手动编辑不依赖云服务。转写可在「设置 → 素材 · 转写」中选择 AssemblyAI、本地 Whisper（首次下载 ONNX 模型，之后缓存在本机）或兼容 OpenAI `/v1/audio/transcriptions` 的自定义服务。其它 AI 模型、在线素材和生成能力只在你配置对应服务后启用。
+基础时间线、本地工程、内置素材、本地磁盘存储和手动编辑不依赖云服务。转写可在「设置 → 素材 · 转写」中选择 AssemblyAI、本地 Whisper（首次下载 ONNX 模型，之后缓存在本机）或兼容 OpenAI `/v1/audio/transcriptions` 的自定义服务。Pexels、Pixabay、Unsplash Demo、Freesound、R2 与 E2B 的免费额度或试用政策由各服务商维护，设置页会标明限制；其它 AI 模型、在线素材和生成能力只在你配置对应服务后启用。
 
 ---
 

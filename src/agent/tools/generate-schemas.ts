@@ -34,22 +34,22 @@ export const GENERATE_TOOL_SCHEMAS: AgentToolSchema[] = [
   },
   {
     name: 'submit_voice',
-    description: 'Generate one TTS audio asset with ElevenLabs, Doubao, or MiniMax. Creates an asset only; it does not place or replace timeline items. Confirm a provider and voice; MiniMax timbreWeights may mix voices with an empty voiceId.',
+    description: 'Generate one TTS audio asset with ElevenLabs, Doubao, MiniMax, or a custom OpenAI-compatible endpoint. Creates an asset only; it does not place or replace timeline items. Confirm a provider and voice; custom may use the configured default voice.',
     input_schema: {
       type: 'object',
       properties: {
-        provider: { type: 'string', enum: ['elevenlabs', 'doubao', 'minimax'], description: 'elevenlabs for multilingual/non-Chinese; doubao for Chinese-optimized speech; minimax for MiniMax Chinese TTS.' }, // minimax: provider enum
+        provider: { type: 'string', enum: ['elevenlabs', 'doubao', 'minimax', 'custom'], description: 'custom uses the configured OpenAI-compatible /v1/audio/speech endpoint.' }, // minimax: provider enum
         text: { type: 'string', minLength: 1, description: 'Text to synthesize.' },
-        voiceId: { type: 'string', description: 'Provider-specific voice ID. Required except MiniMax timbreWeights mixing, where it must be empty. MiniMax defaults to female-yujie when omitted without mixing.' },
-        modelId: { type: 'string', description: 'ElevenLabs only. Defaults to the configured current model.' },
+        voiceId: { type: 'string', description: 'Provider-specific voice ID. Custom may omit it to use the configured default; MiniMax timbreWeights mixing requires it empty.' },
+        modelId: { type: 'string', description: 'ElevenLabs or custom TTS model override. Defaults to the configured current model.' },
         stability: { type: 'number', minimum: 0, maximum: 1, description: 'ElevenLabs only. Defaults to 0.5.' },
-        speed: { type: 'number', minimum: 0.5, maximum: 2, description: 'ElevenLabs (0.7–1.2) or MiniMax (0.5–2). Defaults to 1.' }, // minimax: widened range, server enforces per provider
+        speed: { type: 'number', minimum: 0.25, maximum: 4, description: 'ElevenLabs (0.7–1.2), MiniMax (0.5–2), or custom OpenAI-compatible TTS (0.25–4). Defaults to 1.' }, // server enforces per provider
         similarityBoost: { type: 'number', minimum: 0, maximum: 1, description: 'ElevenLabs voice_settings.similarity_boost.' },
         style: { type: 'number', minimum: 0, maximum: 1, description: 'ElevenLabs voice_settings.style.' },
         useSpeakerBoost: { type: 'boolean', description: 'ElevenLabs speaker boost.' },
         languageCode: { type: 'string', description: 'ElevenLabs ISO 639-1 language code.' },
         seed: { type: 'integer', minimum: 0, maximum: 4294967295, description: 'ElevenLabs reproducibility seed.' },
-        outputFormat: { type: 'string', description: 'ElevenLabs official output enum, e.g. mp3_44100_128, pcm_24000, opus_48000_128, wav_44100.' },
+        outputFormat: { type: 'string', description: 'ElevenLabs official enum (e.g. mp3_44100_128) or custom TTS format: mp3, opus, aac, flac, wav, pcm.' },
         optimizeStreamingLatency: { type: 'integer', minimum: 0, maximum: 4, description: 'ElevenLabs latency optimization level.' },
         enableLogging: { type: 'boolean', description: 'ElevenLabs request logging query control.' },
         applyTextNormalization: { type: 'string', enum: ['auto', 'on', 'off'], description: 'ElevenLabs text normalization.' },

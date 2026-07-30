@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased] / [未发布]
 
+### Added / 新增
+
+- Added configurable OpenAI-compatible image and TTS endpoints, including optional authentication, custom model discovery, and local no-key services; generation vendors with provider-specific protocols now accept free-form compatible model IDs.
+  新增 OpenAI 兼容的自定义生图与 TTS 接口，支持可选鉴权、模型读取和本地免 Key 服务；使用厂商专有协议的生成服务也可自由填写兼容网关模型 ID。
+- Added self-hosted Firecrawl support across web scraping and stock-search fallback, and clarified free-tier or trial options for stock media, local storage, Cloudflare R2, and E2B in Settings.
+  网页抓取与在线素材兜底新增 Firecrawl 自托管地址；设置页同时明确标注在线图库、本地存储、Cloudflare R2 与 E2B 的免费额度或试用限制。
+
 ## [0.1.6] - 2026-07-27
 
 ### Added / 新增

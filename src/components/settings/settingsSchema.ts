@@ -88,6 +88,21 @@ const directory = (name: string, label: string, defaultLabel: string, note?: str
 /** 非密模型 select:首项自动生成「默认（xxx）」(value='')。 */
 const modelSelect = (name: string, label: string, defaultLabel: string, values: readonly string[]): SettingsField =>
   ({ name, label, kind: 'select', defaultLabel, options: values.map((v) => ({ value: v, label: v })) });
+/** 自由填写模型 ID，同时保留常用模型建议；适合兼容网关与自建服务。 */
+const modelInput = (
+  name: string,
+  label: string,
+  defaultLabel: string,
+  values: readonly string[],
+  note?: string,
+): SettingsField => ({
+  name,
+  label,
+  kind: 'text',
+  defaultLabel,
+  options: values.map((value) => ({ value, label: value })),
+  note,
+});
 
 /** 能力路由 select:'' = 每次询问;其余 value 与 agent 工具参数 / PREFERRED_* 存值一致。 */
 const routeSelect = (name: string, options: readonly SelectOption[]): SettingsField => ({
@@ -163,30 +178,41 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
           { value: 'image-01', label: 'MiniMax' },
         ]),
         vendors: [
-          { key: 'image/openai', vendor: 'openai', title: 'OpenAI', fields: [
-            secret('IMAGE_API_KEY', 'API Key（gpt-image）'),
-            text('IMAGE_BASE_URL', 'Base URL', '默认 https://api.openai.com'),
-          ] },
+          { key: 'image/openai', vendor: 'openai', title: 'OpenAI / 自定义兼容',
+            note: '支持 OpenAI /v1/images/generations 与 /v1/images/edits。可填写本地或自建兼容网关；不鉴权的本地服务可不填 Key。',
+            fields: [
+              { name: 'IMAGE_API_KEY', label: 'API Key（可选）', kind: 'secret', optional: true },
+              text('IMAGE_BASE_URL', 'API URL', '默认 https://api.openai.com',
+                '自定义服务填写 API 根地址；保存后请求由 CutAI 本地服务转发。'),
+              {
+                ...modelInput('IMAGE_MODEL', '生图模型', 'gpt-image-2', ['gpt-image-2', 'gpt-image-1']),
+                discoverableModel: true,
+              },
+            ] },
           { key: 'image/gemini', vendor: 'gemini', title: 'Google Gemini', fields: [
             secret('GEMINI_API_KEY', 'API Key（Nano Banana）'),
             text('GEMINI_BASE_URL', 'Base URL', '默认 https://generativelanguage.googleapis.com'),
-            modelText('GEMINI_IMAGE_MODEL', '生图模型', 'gemini-3.1-flash-image'),
+            modelInput('GEMINI_IMAGE_MODEL', '生图模型', 'gemini-3.1-flash-image',
+              ['gemini-3.1-flash-image'], '可填写 Gemini 兼容网关支持的模型 ID。'),
           ] },
-          minimaxPage('image', modelSelect('MINIMAX_IMAGE_MODEL', '生图模型', 'image-01', ['image-01', 'image-01-live'])),
+          minimaxPage('image', modelInput('MINIMAX_IMAGE_MODEL', '生图模型', 'image-01',
+            ['image-01', 'image-01-live'], '可填写 MiniMax 兼容网关支持的模型 ID。')),
         ] },
       { key: 'voice', title: '配音 / TTS', hint: 'submit_voice · 文字转配音，任一厂商即可。',
         route: routeSelect('PREFERRED_VOICE_VENDOR', [
           { value: 'elevenlabs', label: 'ElevenLabs' },
           { value: 'doubao', label: '豆包' },
           { value: 'minimax', label: 'MiniMax' },
+          { value: 'custom', label: '自定义 OpenAI 兼容' },
         ]),
         vendors: [
           { key: 'voice/elevenlabs', vendor: 'elevenlabs', title: 'ElevenLabs',
             note: 'Key 同时用于音效生成（submit_sound）。', fields: [
               secret('ELEVENLABS_API_KEY', 'API Key'),
               text('ELEVENLABS_BASE_URL', 'Base URL', '默认 https://api.elevenlabs.io'),
-              modelSelect('ELEVENLABS_TTS_MODEL', '配音模型', 'eleven_multilingual_v2',
-                ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5']),
+              modelInput('ELEVENLABS_TTS_MODEL', '配音模型', 'eleven_multilingual_v2',
+                ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'],
+                '可填写 ElevenLabs 兼容网关支持的模型 ID。'),
               modelText('ELEVENLABS_SOUND_MODEL', '音效模型', 'eleven_text_to_sound_v2'),
             ] },
           { key: 'voice/doubao', vendor: 'doubao', title: '豆包 TTS · 火山', fields: [
@@ -195,8 +221,25 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
             text('DOUBAO_TTS_BASE_URL', 'Base URL', '默认 https://openspeech.bytedance.com'),
             modelText('DOUBAO_TTS_RESOURCE_ID', '音色资源 ID', 'seed-tts-2.0'),
           ] },
-          minimaxPage('voice', modelSelect('MINIMAX_TTS_MODEL', '配音模型', 'speech-2.6-hd',
-            ['speech-2.6-hd', 'speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'])),
+          minimaxPage('voice', modelInput('MINIMAX_TTS_MODEL', '配音模型', 'speech-2.6-hd',
+            ['speech-2.6-hd', 'speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'],
+            '可填写 MiniMax 兼容网关支持的模型 ID。')),
+          {
+            key: 'voice/custom',
+            vendor: 'openai',
+            title: '自定义 OpenAI 兼容',
+            note: '调用 POST /v1/audio/speech，适用于 LocalAI、自建 TTS 网关或其它 OpenAI 兼容服务；本地无鉴权服务可不填 Key。',
+            fields: [
+              text('VOICE_CUSTOM_BASE_URL', 'API URL', '例如 http://127.0.0.1:8000/v1'),
+              { name: 'VOICE_CUSTOM_API_KEY', label: 'API Key（可选）', kind: 'secret', optional: true },
+              {
+                ...modelInput('VOICE_CUSTOM_MODEL', '配音模型', 'tts-1', ['tts-1', 'gpt-4o-mini-tts']),
+                discoverableModel: true,
+              },
+              modelInput('VOICE_CUSTOM_VOICE', '默认音色', 'alloy',
+                ['alloy', 'ash', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']),
+            ],
+          },
         ] },
       { key: 'video', title: '生视频', hint: 'submit_video · 文 / 图生视频，任一厂商即可。',
         route: routeSelect('PREFERRED_VIDEO_VENDOR', [
@@ -208,15 +251,18 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
           { key: 'video/seedance', vendor: 'seedance', title: 'Seedance · 火山', fields: [
             secret('SEEDANCE_API_KEY', 'API Key'),
             text('SEEDANCE_BASE_URL', 'Base URL', '默认 https://ark.cn-beijing.volces.com/api/v3'),
-            modelText('SEEDANCE_VIDEO_MODEL', '视频模型', 'doubao-seedance-2-0-260128'),
+            modelInput('SEEDANCE_VIDEO_MODEL', '视频模型', 'doubao-seedance-2-0-260128',
+              ['doubao-seedance-2-0-260128'], '可填写 Seedance 协议兼容网关的模型 ID。'),
           ] },
           { key: 'video/kling', vendor: 'kling', title: '可灵 Kling', fields: [
             secret('KLING_API_KEY', 'API Key'),
             text('KLING_BASE_URL', 'Base URL', '默认 https://api-singapore.klingai.com'),
-            modelText('KLING_VIDEO_MODEL', '视频模型', 'kling-v3-omni'),
+            modelInput('KLING_VIDEO_MODEL', '视频模型', 'kling-v3-omni',
+              ['kling-v3-omni'], '可填写 Kling 协议兼容网关的模型 ID。'),
           ] },
-          minimaxPage('video', modelSelect('MINIMAX_VIDEO_MODEL', '视频模型', 'MiniMax-Hailuo-02',
-            ['MiniMax-Hailuo-02', 'MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-2.3-Fast', 'S2V-01']), 'MiniMax 海螺', 'hailuo'),
+          minimaxPage('video', modelInput('MINIMAX_VIDEO_MODEL', '视频模型', 'MiniMax-Hailuo-02',
+            ['MiniMax-Hailuo-02', 'MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-2.3-Fast', 'S2V-01'],
+            '可填写 MiniMax 视频协议兼容网关的模型 ID。'), 'MiniMax 海螺', 'hailuo'),
         ] },
       { key: 'music', title: '生音乐', hint: 'submit_music · 文字生成配乐，任一厂商即可。',
         route: routeSelect('PREFERRED_MUSIC_VENDOR', [
@@ -227,10 +273,12 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
           { key: 'music/mureka', vendor: 'mureka', title: 'Mureka', fields: [
             secret('MUREKA_API_KEY', 'API Key'),
             text('MUREKA_BASE_URL', 'Base URL', '默认 https://api.mureka.ai'),
-            modelText('MUREKA_MUSIC_MODEL', '音乐模型', 'auto'),
+            modelInput('MUREKA_MUSIC_MODEL', '音乐模型', 'auto', ['auto'],
+              '可填写 Mureka 协议兼容网关的模型 ID。'),
           ] },
-          minimaxPage('music', modelSelect('MINIMAX_MUSIC_MODEL', '音乐模型', 'music-2.6',
-            ['music-3.0', 'music-2.6', 'music-3.0-free', 'music-2.6-free', 'music-cover', 'music-cover-free'])),
+          minimaxPage('music', modelInput('MINIMAX_MUSIC_MODEL', '音乐模型', 'music-2.6',
+            ['music-3.0', 'music-2.6', 'music-3.0-free', 'music-2.6-free', 'music-cover', 'music-cover-free'],
+            '可自由填写模型 ID；带 -free 的模型由服务商决定额度和可用性，并非永久免费。')),
         ] },
     ],
   },
@@ -239,10 +287,18 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     groups: [
       { key: 'stock', title: '在线图库', hint: 'search_stock_media · 搜索可商用图片 / 视频素材。',
         vendors: [
-          { key: 'stock/pexels', vendor: 'pexels', title: 'Pexels', fields: [secret('PEXELS_API_KEY', 'API Key')] },
-          { key: 'stock/pixabay', vendor: 'pixabay', title: 'Pixabay', fields: [secret('PIXABAY_API_KEY', 'API Key')] },
-          { key: 'stock/unsplash', vendor: 'unsplash', title: 'Unsplash', fields: [secret('UNSPLASH_ACCESS_KEY', 'Access Key')] },
-          { key: 'stock/freesound', vendor: 'freesound', title: 'Freesound', fields: [secret('FREESOUND_API_KEY', 'API Key')] },
+          { key: 'stock/pexels', vendor: 'pexels', title: 'Pexels（免费 API）',
+            note: '官方 API 免费使用，但有每小时和每月请求上限；素材使用仍需遵守 Pexels 条款。',
+            fields: [secret('PEXELS_API_KEY', '免费 API Key')] },
+          { key: 'stock/pixabay', vendor: 'pixabay', title: 'Pixabay（免费 API）',
+            note: '官方 API 可免费申请，默认有频率限制，并要求在结果中注明素材来源。',
+            fields: [secret('PIXABAY_API_KEY', '免费 API Key')] },
+          { key: 'stock/unsplash', vendor: 'unsplash', title: 'Unsplash（免费 Demo）',
+            note: 'Demo 模式有免费请求额度；上线使用需遵守署名、热链和生产审核要求。',
+            fields: [secret('UNSPLASH_ACCESS_KEY', '免费 Access Key')] },
+          { key: 'stock/freesound', vendor: 'freesound', title: 'Freesound（免费 Key）',
+            note: '注册后可申请 API 凭据；每条声音的具体许可证不同，导入前需检查素材授权。',
+            fields: [secret('FREESOUND_API_KEY', '免费 API Key')] },
         ] },
       { key: 'transcription', title: '转写 / 口播剪辑', hint: 'transcribe_track · 词级字幕、清口水、删词。',
         route: {
@@ -310,7 +366,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     groups: [
       { key: 'storage', title: '媒体存储', hint: '素材的本地保存目录，与可选的 R2 云备份。',
         vendors: [
-          { key: 'storage/local', vendor: 'localdisk', title: '本地磁盘',
+          { key: 'storage/local', vendor: 'localdisk', title: '本地磁盘（免费）',
             note: '桌面端默认把素材存入系统应用数据目录，浏览器开发版默认使用 public/media/uploads/。'
               + '可选择任意本机目录或外置硬盘；保存后旧目录中的素材会复制到新目录（原文件保留），'
               + '工程里的素材地址不变，预览与渲染导出都会跟随新目录。',
@@ -318,8 +374,9 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
               directory('MEDIA_DIR', '素材保存目录', '系统默认素材目录',
                 '桌面端点击“选择目录”；浏览器中也可手动输入绝对路径。清除后回到当前运行环境的默认目录。'),
             ] },
-          { key: 'storage/r2', vendor: 'r2', title: 'Cloudflare R2',
-            note: '未配置时素材只存本机（「本地磁盘」页的目录）。配置后：每次上传同步写入 R2（桶保持私有，'
+          { key: 'storage/r2', vendor: 'r2', title: 'Cloudflare R2（含免费额度）',
+            note: 'R2 Standard 当前包含每月免费存储和操作额度，超出后按量计费；具体额度以 Cloudflare 官方价格页为准。'
+              + '未配置时素材只存本机（「本地磁盘」页的目录）。配置后：每次上传同步写入 R2（桶保持私有，'
               + '读取经本地服务回源，src 路径不变）；本机缺文件时自动从云端取回。改动即时生效。'
               + 'R2 控制台建桶 → R2 API Token（Object Read & Write）即可拿到下面四个值。',
             fields: [
@@ -338,8 +395,8 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
     groups: [
       { key: 'sandbox', title: '沙箱执行', hint: 'run_code · 云端沙箱运行 ffmpeg / node / python。',
         vendors: [
-          { key: 'sandbox/e2b', vendor: 'e2b', title: 'E2B',
-            note: '云端隔离 Linux 沙箱，不触碰本机文件。Agent 用它跑 run_code：ffprobe 探测素材时长 / '
+          { key: 'sandbox/e2b', vendor: 'e2b', title: 'E2B（新用户试用额度）',
+            note: 'E2B 当前为按量计费，新用户有一次性试用额度，不是永久免费服务。云端隔离 Linux 沙箱，不触碰本机文件。Agent 用它跑 run_code：ffprobe 探测素材时长 / '
               + '尺寸编码、ffmpeg 转码 / 抽帧 / 加工音视频、执行 node / python 技能脚本，结果回传后'
               + '由本地工具应用到时间线。未配置只影响这些工具，剪辑与预览不受影响。',
             fields: [
@@ -350,8 +407,13 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
         ] },
       { key: 'web', title: '网页抓取', hint: 'web_browser · 抓取网页内容供 Agent 参考。',
         vendors: [
-          { key: 'web/firecrawl', vendor: 'firecrawl', title: 'Firecrawl',
-            fields: [secret('FIRECRAWL_API_KEY', 'API Key')] },
+          { key: 'web/firecrawl', vendor: 'firecrawl', title: 'Firecrawl 云端 / 自托管',
+            note: '云端服务填写 Key；免费自托管实例填写 API URL，Key 可留空。自托管的浏览器与高级提取能力取决于部署组件。',
+            fields: [
+              text('FIRECRAWL_BASE_URL', '自托管 API URL（可选）', '例如 http://127.0.0.1:3002',
+                '可填写根地址、/v1 或 /v2；CutAI 会按请求自动选择对应版本。'),
+              { name: 'FIRECRAWL_API_KEY', label: 'API Key（云端必填，自托管可选）', kind: 'secret', optional: true },
+            ] },
         ] },
     ],
   },
@@ -431,18 +493,19 @@ export function selectOptions(field: SettingsField): readonly SelectOption[] {
 // 路由选项 value → 判「已配置」所需 key(OR 的 AND 组;镜像服务端 computeCaps 与
 // agent capabilities 的 CAP_PROVIDERS,勿单独改动)。
 const ROUTE_NEEDS: Record<string, readonly (readonly string[])[]> = {
-  'gpt-image-2': [['IMAGE_API_KEY'], ['OPENAI_API_KEY']],
+  'gpt-image-2': [['IMAGE_API_KEY'], ['OPENAI_API_KEY'], ['IMAGE_BASE_URL']],
   'nano-banana': [['GEMINI_API_KEY']],
   'image-01': [['MINIMAX_API_KEY']],
   elevenlabs: [['ELEVENLABS_API_KEY']],
   doubao: [['DOUBAO_TTS_APP_ID', 'DOUBAO_TTS_ACCESS_KEY']],
   minimax: [['MINIMAX_API_KEY']],
+  'PREFERRED_VOICE_VENDOR:custom': [['VOICE_CUSTOM_BASE_URL']],
   seedance2: [['SEEDANCE_API_KEY']],
   kling: [['KLING_API_KEY']],
   hailuo: [['MINIMAX_API_KEY']],
   mureka: [['MUREKA_API_KEY']],
   local: [[]],
-  custom: [['TRANSCRIPTION_CUSTOM_BASE_URL']],
+  'PREFERRED_TRANSCRIPTION_VENDOR:custom': [['TRANSCRIPTION_CUSTOM_BASE_URL']],
 };
 
 /** 路由下拉选项文案:厂商未配置时加「（未配置）」后缀,仍可选(Agent 侧有回退询问护栏)。
@@ -451,7 +514,7 @@ export function selectOptionLabel(
   status: KeyStatusResponse | null, field: SettingsField, opt: SelectOption,
 ): string {
   if (!field.name.startsWith('PREFERRED_') || opt.value === '') return t(opt.label);
-  const needs = ROUTE_NEEDS[opt.value];
+  const needs = ROUTE_NEEDS[`${field.name}:${opt.value}`] ?? ROUTE_NEEDS[opt.value];
   const has = (n: string): boolean => Boolean(status?.keys[n]?.configured);
   const ok = Boolean(needs?.some((group) => group.every(has)));
   return ok ? t(opt.label) : t('{name}（未配置）', { name: t(opt.label) });

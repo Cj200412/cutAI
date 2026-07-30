@@ -54,7 +54,7 @@ export function applyLiveModels(models: Record<string, string>): void {
 interface ProviderRow { label: string; arg: string; argKey: 'model' | 'provider'; need: string[][] }
 const CAP_PROVIDERS: Partial<Record<CapabilityKey, ProviderRow[]>> = {
   image: [
-    { label: 'gpt-image', arg: 'gpt-image-2', argKey: 'model', need: [['IMAGE_API_KEY'], ['OPENAI_API_KEY']] },
+    { label: 'OpenAI 兼容生图', arg: 'gpt-image-2', argKey: 'model', need: [['IMAGE_API_KEY'], ['OPENAI_API_KEY'], ['IMAGE_BASE_URL']] },
     { label: 'Nano Banana', arg: 'nano-banana', argKey: 'model', need: [['GEMINI_API_KEY']] },
     { label: 'MiniMax', arg: 'image-01', argKey: 'model', need: [['MINIMAX_API_KEY']] },
   ],
@@ -62,6 +62,7 @@ const CAP_PROVIDERS: Partial<Record<CapabilityKey, ProviderRow[]>> = {
     { label: 'ElevenLabs', arg: 'elevenlabs', argKey: 'provider', need: [['ELEVENLABS_API_KEY']] },
     { label: '豆包', arg: 'doubao', argKey: 'provider', need: [['DOUBAO_TTS_APP_ID', 'DOUBAO_TTS_ACCESS_KEY']] },
     { label: 'MiniMax', arg: 'minimax', argKey: 'provider', need: [['MINIMAX_API_KEY']] },
+    { label: '自定义兼容 TTS', arg: 'custom', argKey: 'provider', need: [['VOICE_CUSTOM_BASE_URL']] },
   ],
   video: [
     { label: 'Seedance', arg: 'seedance2', argKey: 'model', need: [['SEEDANCE_API_KEY']] },
@@ -106,16 +107,16 @@ function providerSuffix(cap: CapabilityKey): string {
 }
 
 // label + the primary tool + a fallback hint when the capability is off.
-const CAP_ROWS: { key: CapabilityKey; label: string; tool: string; fallback: string }[] = [
-  { key: 'image', label: '生图', tool: 'submit_image', fallback: '改用 push_asset/import_url_asset 导入公网图片，或让用户上传/粘贴' },
-  { key: 'voice', label: '配音/TTS', tool: 'submit_voice', fallback: '让用户自备并上传/粘贴音频' },
-  { key: 'video', label: '生视频', tool: 'submit_video', fallback: '改用 push_asset 导入公网视频，或让用户上传' },
-  { key: 'music', label: '生音乐', tool: 'submit_music', fallback: '改用库内 list_audio/add_audio，或让用户上传' },
-  { key: 'sound', label: '音效生成', tool: 'submit_sound', fallback: '改用库内音效 list_audio/add_audio' },
-  { key: 'stock', label: '在线图库搜索', tool: 'search_stock_media', fallback: '改用 push_asset 直接导入已知公网 URL' },
-  { key: 'transcription', label: '转写/口播剪辑', tool: 'transcribe_track', fallback: '无法做词级删词/清口水/自动字幕' },
-  { key: 'sandbox', label: '沙箱执行(ffmpeg/node/python)', tool: 'run_code', fallback: '跳过 probe_media 等沙箱步骤' },
-  { key: 'web', label: '网页抓取', tool: 'web_browser', fallback: '请用户直接粘贴网页内容' },
+const CAP_ROWS: { key: CapabilityKey; label: string; tool: string; fallback: string; setting: string }[] = [
+  { key: 'image', label: '生图', tool: 'submit_image', fallback: '改用 push_asset/import_url_asset 导入公网图片，或让用户上传/粘贴', setting: 'AI 生成 → 生图' },
+  { key: 'voice', label: '配音/TTS', tool: 'submit_voice', fallback: '让用户自备并上传/粘贴音频', setting: 'AI 生成 → 配音 / TTS' },
+  { key: 'video', label: '生视频', tool: 'submit_video', fallback: '改用 push_asset 导入公网视频，或让用户上传', setting: 'AI 生成 → 生视频' },
+  { key: 'music', label: '生音乐', tool: 'submit_music', fallback: '改用库内 list_audio/add_audio，或让用户上传', setting: 'AI 生成 → 生音乐' },
+  { key: 'sound', label: '音效生成', tool: 'submit_sound', fallback: '改用库内音效 list_audio/add_audio', setting: 'AI 生成 → 配音 / TTS → ElevenLabs' },
+  { key: 'stock', label: '在线图库搜索', tool: 'search_stock_media', fallback: '改用 push_asset 直接导入已知公网 URL', setting: '素材 · 转写 → 在线图库' },
+  { key: 'transcription', label: '转写/口播剪辑', tool: 'transcribe_track', fallback: '无法做词级删词/清口水/自动字幕', setting: '素材 · 转写 → 转写 / 口播剪辑' },
+  { key: 'sandbox', label: '沙箱执行(ffmpeg/node/python)', tool: 'run_code', fallback: '跳过 probe_media 等沙箱步骤', setting: '增强工具 → 沙箱执行' },
+  { key: 'web', label: '网页抓取', tool: 'web_browser', fallback: '请用户直接粘贴网页内容', setting: '增强工具 → 网页抓取' },
 ];
 
 /** System-prompt section listing which key-gated tools are on/off (local editing —
@@ -125,11 +126,11 @@ export function capabilitiesPrompt(caps: Record<CapabilityKey, boolean> = curren
   const off: string[] = [];
   for (const r of CAP_ROWS) {
     if (caps[r.key]) on.push(`${r.label}(${r.tool}${providerSuffix(r.key)})`);
-    else off.push(`${r.label}(${r.tool})——${r.fallback}`);
+    else off.push(`${r.label}(${r.tool})——${r.fallback}；如需启用，引导用户打开「设置 → ${r.setting}」`);
   }
   return `\n\n# 当前可用能力（按已配置的 API key，local 剪辑不吃 key 恒可用）\n`
     + `✅ 已配置可用：${on.length ? on.join('、') : '（无 key 类能力）'}。\n`
     + `⬜ 未配置——别在计划里承诺、别调用（调用会返回「not configured」错误，白费一轮）：\n`
     + (off.length ? off.map((s) => `  - ${s}`).join('\n') : '  （无）')
-    + `\n需要未配置的能力时，按上面每条的替代方案走，或直接告诉用户"该能力未接入"。`;
+    + `\n需要未配置的能力时，按上面每条的替代方案走，并明确告诉用户该能力未接入以及对应设置路径。`;
 }

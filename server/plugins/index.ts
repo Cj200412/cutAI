@@ -38,6 +38,8 @@ export function serverPlugins(): Plugin[] {
   return [llmProxyPlugin(), transcriptionCompatiblePlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
     get baseUrl() { return getKey('IMAGE_BASE_URL') || 'https://api.openai.com'; },
     get apiKey() { return getKey('IMAGE_API_KEY') || getKey('OPENAI_API_KEY'); },
+    get model() { return getKey('IMAGE_MODEL') || 'gpt-image-2'; },
+    get allowUnauthenticated() { return Boolean(getKey('IMAGE_BASE_URL')); },
     get geminiBaseUrl() { return getKey('GEMINI_BASE_URL') || 'https://generativelanguage.googleapis.com'; },
     get geminiApiKey() { return getKey('GEMINI_API_KEY'); },
     get geminiModel() { return getKey('GEMINI_IMAGE_MODEL') || 'gemini-3.1-flash-image'; },
@@ -55,6 +57,10 @@ export function serverPlugins(): Plugin[] {
     get minimaxBaseUrl() { return getKey('MINIMAX_BASE_URL') || 'https://api.minimaxi.com'; },
     get minimaxApiKey() { return getKey('MINIMAX_API_KEY'); },
     get minimaxModel() { return getKey('MINIMAX_TTS_MODEL') || 'speech-2.6-hd'; },
+    get customBaseUrl() { return getKey('VOICE_CUSTOM_BASE_URL'); },
+    get customApiKey() { return getKey('VOICE_CUSTOM_API_KEY'); },
+    get customModel() { return getKey('VOICE_CUSTOM_MODEL') || 'tts-1'; },
+    get customVoice() { return getKey('VOICE_CUSTOM_VOICE') || 'alloy'; },
   }), soundGenerationPlugin({ get baseUrl() { return getKey('ELEVENLABS_BASE_URL') || 'https://api.elevenlabs.io'; }, get apiKey() { return getKey('ELEVENLABS_API_KEY'); }, get model() { return getKey('ELEVENLABS_SOUND_MODEL') || 'eleven_text_to_sound_v2'; } }),
   musicGenerationPlugin({
     get baseUrl() { return getKey('MUREKA_BASE_URL') || 'https://api.mureka.ai'; }, get apiKey() { return getKey('MUREKA_API_KEY'); }, get model() { return getKey('MUREKA_MUSIC_MODEL') || 'auto'; },
@@ -77,8 +83,12 @@ export function serverPlugins(): Plugin[] {
     get unsplashAccessKey() { return getKey('UNSPLASH_ACCESS_KEY'); },
     get freesoundApiKey() { return getKey('FREESOUND_API_KEY'); },
     get firecrawlApiKey() { return getKey('FIRECRAWL_API_KEY'); },
+    get firecrawlBaseUrl() { return getKey('FIRECRAWL_BASE_URL'); },
   }),
-  firecrawlPlugin({ get apiKey() { return getKey('FIRECRAWL_API_KEY'); } }),
+  firecrawlPlugin({
+    get apiKey() { return getKey('FIRECRAWL_API_KEY'); },
+    get baseUrl() { return getKey('FIRECRAWL_BASE_URL'); },
+  }),
   e2bPlugin({ get apiKey() { return getKey('E2B_API_KEY'); }, get template() { return getKey('E2B_TEMPLATE') || undefined; } }),
   ];
 }

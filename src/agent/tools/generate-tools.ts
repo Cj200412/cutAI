@@ -22,12 +22,12 @@ export const GENERATE_WORKFLOW = `
 
 ## TTS voice generation
 - Use submit_voice only for an explicitly requested TTS generation after the user has confirmed a concrete provider and voiceId.
-- Providers: doubao (Chinese-optimized), elevenlabs (English/multilingual), minimax (when configured). Never mix voice catalogs across providers.
+- Providers: doubao (Chinese-optimized), elevenlabs (English/multilingual), minimax, or custom (configured OpenAI-compatible /v1/audio/speech). Never mix voice catalogs across providers.
 - MiniMax supports speed (0.5–2), pitch (-12–12), volume (0–10), and emotion natively. Doubao pitch is post-process; emotionScale/performancePrompt are Doubao-only.
 - Curated Doubao examples include vivi, xiaohe, yunzhou, dayi, liuchang, and morgan. Curated ElevenLabs examples include amelia, hope, peter, james, and sully. MiniMax examples include female-yujie, male-qn-qingse.
 - Voice samples are available at /voice-samples/<provider>-<voiceId>.mp3 when bundled. If the user has not chosen a concrete voice, offer a few matching samples before generating.
 - submit_voice creates one media-pool audio asset only. Do not claim it was placed on the timeline.
-- Only call providers whose keys are configured (capabilities prompt).
+- Only call providers whose required configuration is available (custom endpoints may not require a key).
 
 ## Sound-effect generation
 - Use submit_sound only after the user explicitly requests a new/original/custom sound, or when the existing sound-effects library has no suitable result.

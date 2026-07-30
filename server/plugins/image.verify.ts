@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { validateImageRequest } from './image.ts';
+import { createServer, type Server } from 'node:http';
+import { callOpenAiCompatibleImage, validateImageRequest } from './image.ts';
+
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  return address.port;
+}
 
 const basic = validateImageRequest({ prompt: 'a cat' });
 assert.equal(basic.model, 'gpt-image-2');
@@ -65,5 +76,38 @@ assert.throws(
   () => validateImageRequest({ model: 'nano-banana', prompt: 'x', quality: 'high' }),
   /GPT Image options are not supported/,
 );
+
+let customAuth = 'unset';
+let customBody: Record<string, unknown> = {};
+let customPath = '';
+const customImageServer = createServer((req, res) => {
+  customAuth = String(req.headers.authorization ?? '');
+  customPath = req.url ?? '';
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
+  req.on('end', () => {
+    customBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('image').toString('base64') }] }));
+  });
+});
+const customImagePort = await listen(customImageServer);
+try {
+  const result = await callOpenAiCompatibleImage(`http://127.0.0.1:${customImagePort}/v1`, '', {
+    model: 'local-image-model',
+    prompt: 'local prompt',
+    quality: 'auto',
+    count: 1,
+    size: '1024x1024',
+    referencePaths: [],
+    outputFormat: 'png',
+  });
+  assert.equal(customAuth, '', 'unauthenticated local image endpoints do not receive a bearer header');
+  assert.equal(customPath, '/v1/images/generations', 'a configured /v1 prefix is not duplicated');
+  assert.equal(customBody.model, 'local-image-model');
+  assert.equal(result.length, 1);
+} finally {
+  await new Promise<void>((resolve) => customImageServer.close(() => resolve()));
+}
 
 console.log('image.check: ok (provider-specific official parameters)');

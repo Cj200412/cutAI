@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
-import { minimaxVoiceBody, minimaxVoiceResult } from './voice-providers.ts';
+import { createServer, type Server } from 'node:http';
+import { minimaxVoiceBody, minimaxVoiceResult, openAiCompatibleVoice } from './voice-providers.ts';
 import { validateVoiceRequest } from './voice.ts';
+import type { VoiceOptions } from './voice-types.ts';
+
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  return address.port;
+}
 
 const mm = validateVoiceRequest({
   provider: 'minimax',
@@ -103,5 +115,49 @@ const doubao = validateVoiceRequest({
   emotionScale: 3,
 });
 assert.equal(doubao.provider, 'doubao');
+
+const custom = validateVoiceRequest({
+  provider: 'custom',
+  text: '你好',
+  voiceId: '',
+  modelId: 'request-model',
+  speed: 1.25,
+  outputFormat: 'mp3',
+});
+assert.equal(custom.provider, 'custom');
+assert.equal(custom.voiceId, '');
+
+let customAuth = 'unset';
+let customBody: Record<string, unknown> = {};
+const customServer = createServer((req, res) => {
+  customAuth = String(req.headers.authorization ?? '');
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
+  req.on('end', () => {
+    customBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+    res.writeHead(200, { 'content-type': 'audio/mpeg' });
+    res.end(Buffer.from('mock-mp3'));
+  });
+});
+const customPort = await listen(customServer);
+try {
+  const options: VoiceOptions = {
+    elevenBaseUrl: '', elevenApiKey: '', elevenModel: '',
+    doubaoBaseUrl: '', doubaoAppId: '', doubaoAccessKey: '', doubaoResourceId: '',
+    minimaxBaseUrl: '', minimaxApiKey: '', minimaxModel: '',
+    customBaseUrl: `http://127.0.0.1:${customPort}/v1`,
+    customApiKey: '',
+    customModel: 'configured-model',
+    customVoice: 'zh-default',
+  };
+  const audio = await openAiCompatibleVoice(options, custom);
+  assert.equal(customAuth, '', 'unauthenticated local TTS endpoints do not receive a bearer header');
+  assert.equal(customBody.model, 'request-model');
+  assert.equal(customBody.voice, 'zh-default');
+  assert.equal(customBody.response_format, 'mp3');
+  assert.equal(audio.toString(), 'mock-mp3');
+} finally {
+  await new Promise<void>((resolve) => customServer.close(() => resolve()));
+}
 
 console.log('voice.check: ok (minimax pitch/volume + provider gates)');

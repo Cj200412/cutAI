@@ -12,6 +12,7 @@ const MINIMAX_RATES = new Set([8_000, 16_000, 22_050, 24_000, 32_000, 44_100]);
 const MINIMAX_BITRATES = new Set([32_000, 64_000, 128_000, 256_000]);
 const MINIMAX_FORMATS = new Set(['mp3', 'pcm', 'flac', 'wav', 'pcmu_raw', 'pcmu_wav', 'opus']);
 const MINIMAX_LANGUAGES = new Set<string>(MINIMAX_LANGUAGE_BOOSTS);
+const CUSTOM_OUTPUTS = new Set(['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm']);
 
 function range(value: number | undefined, min: number, max: number, name: string): void {
   if (value != null && (!Number.isFinite(value) || value < min || value > max)) throw new Error(`${name} must be between ${min} and ${max}`);
@@ -91,17 +92,42 @@ function validateMinimax(input: VoiceRequest, text: string): void {
     input.performancePrompt, input.explicitDialect], 'MiniMax does not accept ElevenLabs/Doubao-only voice parameters');
 }
 
+function validateCustom(input: VoiceRequest): void {
+  range(input.speed, 0.25, 4, 'speed');
+  if (!CUSTOM_OUTPUTS.has(input.outputFormat ?? 'mp3')) {
+    throw new Error(`custom TTS outputFormat must be one of: ${[...CUSTOM_OUTPUTS].join(', ')}`);
+  }
+  reject([
+    input.stability, input.similarityBoost, input.style, input.useSpeakerBoost, input.languageCode,
+    input.seed, input.optimizeStreamingLatency, input.enableLogging, input.applyTextNormalization,
+    input.applyLanguageTextNormalization, input.pronunciationDictionaryLocators, input.previousText,
+    input.nextText, input.previousRequestIds, input.nextRequestIds, input.speedRatio, input.emotion,
+    input.emotionScale, input.loudnessRatio, input.pitch, input.volume, input.performancePrompt,
+    input.explicitDialect, input.sampleRate, input.bitrate, input.audioFormat, input.channel,
+    input.forceCbr, input.stream, input.excludeAggregatedAudio, input.languageBoost,
+    input.textNormalization, input.latexRead, input.pronunciations, input.timbreWeights,
+    input.voiceModify, input.subtitleEnable, input.subtitleType,
+  ], 'Custom OpenAI-compatible TTS accepts only voiceId, modelId, speed, and outputFormat');
+}
+
 export function validateVoiceRequest(input: VoiceRequest): ValidVoiceRequest {
-  if (input.provider !== 'elevenlabs' && input.provider !== 'doubao' && input.provider !== 'minimax') throw new Error('provider must be elevenlabs, doubao, or minimax');
+  if (input.provider !== 'elevenlabs' && input.provider !== 'doubao'
+    && input.provider !== 'minimax' && input.provider !== 'custom') {
+    throw new Error('provider must be elevenlabs, doubao, minimax, or custom');
+  }
   const text = String(input.text ?? '').trim();
   const requestedVoiceId = String(input.voiceId ?? '').trim();
   const voiceId = requestedVoiceId || (input.provider === 'minimax' && !input.timbreWeights?.length ? 'female-yujie' : '');
   if (!text) throw new Error('text is required');
-  if (!voiceId && !(input.provider === 'minimax' && input.timbreWeights?.length)) throw new Error('voiceId is required');
+  if (!voiceId && input.provider !== 'custom' && !(input.provider === 'minimax' && input.timbreWeights?.length)) {
+    throw new Error('voiceId is required');
+  }
   if (input.provider === 'elevenlabs') validateEleven(input);
   else if (input.provider === 'doubao') validateDoubao(input, voiceId);
-  else validateMinimax(input, text);
-  return { ...input, provider: input.provider, text, voiceId, outputFormat: input.outputFormat ?? 'mp3_44100_128',
+  else if (input.provider === 'minimax') validateMinimax(input, text);
+  else validateCustom(input);
+  const defaultOutput = input.provider === 'custom' ? 'mp3' : 'mp3_44100_128';
+  return { ...input, provider: input.provider, text, voiceId, outputFormat: input.outputFormat ?? defaultOutput,
     sampleRate: input.sampleRate ?? 32_000,
     bitrate: input.bitrate ?? ((input.audioFormat ?? 'mp3') === 'mp3' ? 128_000 : undefined),
     audioFormat: input.audioFormat ?? 'mp3', channel: input.channel ?? 1 };

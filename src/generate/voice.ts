@@ -2,7 +2,7 @@ import type { MediaAsset, TimelineState } from '../editor/types';
 import type { MinimaxLanguageBoost } from '../../shared/media-provider-params';
 
 export interface SubmitVoiceArgs {
-  provider: 'elevenlabs' | 'doubao' | 'minimax';
+  provider: 'elevenlabs' | 'doubao' | 'minimax' | 'custom';
   text: string;
   voiceId: string;
   modelId?: string;
@@ -80,7 +80,9 @@ export async function submitVoice(args: SubmitVoiceArgs, state: TimelineState): 
   const text = args.text.trim();
   const voiceId = args.voiceId.trim();
   if (!text) throw new Error('text is required');
-  if (!voiceId && !args.timbreWeights?.length) throw new Error('voiceId is required unless MiniMax timbreWeights are provided');
+  if (!voiceId && args.provider !== 'custom' && !args.timbreWeights?.length) {
+    throw new Error('voiceId is required unless custom TTS has a configured default or MiniMax timbreWeights are provided');
+  }
   const response = await fetch('/generate/voice', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -95,7 +97,7 @@ export async function submitVoice(args: SubmitVoiceArgs, state: TimelineState): 
   const props = result.subtitlePath ? { minimaxSubtitlePath: result.subtitlePath, minimaxSubtitleType: args.subtitleType ?? 'sentence' } : undefined;
   return {
     id: newId(),
-    name: args.name?.trim() || `Voice · ${voiceId}`,
+    name: args.name?.trim() || `Voice · ${voiceId || 'custom default'}`,
     kind: 'audio',
     src: result.path,
     durationInFrames,

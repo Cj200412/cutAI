@@ -450,7 +450,7 @@ async function execSearchStockMedia(args: Args): Promise<unknown> {
       return {
         error: kind === 'audio' || kind === 'music'
           ? '未配置音频素材库 API key（FREESOUND_API_KEY），可改用内置音效库或 download_media / push_asset 直接导入 URL'
-          : '未配置素材搜索凭据（PEXELS_API_KEY / PIXABAY_API_KEY / UNSPLASH_ACCESS_KEY / FIRECRAWL_API_KEY），可改用 download_media / push_asset 直接导入 URL',
+          : '未配置素材搜索服务（Pexels / Pixabay / Unsplash / Freesound，或 Firecrawl 云端 Key / 自托管 URL），可改用 download_media / push_asset 直接导入 URL',
         results: [],
         warnings: body.warnings ?? [],
       };

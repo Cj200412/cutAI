@@ -100,6 +100,13 @@ const eleven = buildSubmitVoiceArgs({
 assert.equal(eleven.volume, undefined, 'ElevenLabs must not receive MiniMax controls');
 assert.equal(eleven.speedRatio, undefined, 'ElevenLabs must not receive Doubao controls');
 
+const customVoice = buildSubmitVoiceArgs({
+  provider: 'custom', text: 'Local voice', modelId: 'local-tts', speed: 1.2, outputFormat: 'wav',
+});
+assert.equal(customVoice.provider, 'custom');
+assert.equal(customVoice.modelId, 'local-tts');
+assert.equal(customVoice.outputFormat, 'wav');
+
 const minimaxVoice = buildSubmitVoiceArgs({
   provider: 'minimax', text: '你好', voiceId: 'female-yujie', audioFormat: 'wav',
   bitrate: 128000, stream: false, excludeAggregatedAudio: false, forceCbr: false,
