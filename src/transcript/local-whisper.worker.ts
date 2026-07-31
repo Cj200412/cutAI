@@ -59,28 +59,40 @@ async function load(request: TranscribeRequest) {
 
 async function run(request: TranscribeRequest): Promise<void> {
   const pipe = await load(request);
-  const output = await pipe(request.audio, {
-    language: 'chinese',
-    task: 'transcribe',
-    // ONNX Whisper exports reliably expose segment timestamps. Word timestamps
-    // require cross-attention outputs that are absent from common quantized
-    // browser builds, so the main thread expands segments into editable tokens.
-    return_timestamps: true,
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
   const durationSeconds = request.audio.length / 16_000;
+  const allChunks: WhisperChunk[] = [];
+  let cursor = 0;
+  // Adaptive windows: start at 5s, grow in 5s steps until the recognized text
+  // reaches a natural punctuation boundary. This avoids sending a long master
+  // as one request while keeping sentence timing intact.
+  while (cursor < durationSeconds) {
+    let window = Math.min(5, durationSeconds - cursor);
+    let output: WhisperOutput = { text: '', chunks: [] };
+    for (;;) {
+      const start = Math.round(cursor * 16_000);
+      const end = Math.min(request.audio.length, Math.round((cursor + window) * 16_000));
+      output = await pipe(request.audio.slice(start, end), {
+        language: 'chinese', task: 'transcribe', return_timestamps: true,
+        chunk_length_s: Math.min(30, window), stride_length_s: Math.min(2, window / 3),
+      });
+      const text = output.text ?? '';
+      const boundary = /[。！？；.!?;]\s*$/.test(text.trim());
+      if (boundary || cursor + window >= durationSeconds || window >= 30) break;
+      window = Math.min(window + 5, durationSeconds - cursor);
+    }
+    for (const chunk of output.chunks ?? []) {
+      const start = (chunk.timestamp?.[0] ?? 0) + cursor;
+      const end = (chunk.timestamp?.[1] ?? window) + cursor;
+      allChunks.push({ ...chunk, timestamp: [start, end] });
+    }
+    cursor += window;
+  }
   scope.postMessage({
     id: request.id,
     type: 'result',
     result: {
-      text: output.text ?? '',
-      chunks: (output.chunks ?? []).map((chunk) => ({
-        ...chunk,
-        timestamp: chunk.timestamp
-          ? [chunk.timestamp[0] ?? 0, chunk.timestamp[1] ?? durationSeconds]
-          : chunk.timestamp,
-      })),
+      text: allChunks.map((chunk) => chunk.text ?? '').join(''),
+      chunks: allChunks,
     },
   });
 }
