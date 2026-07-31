@@ -429,7 +429,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
     commands.setItemTranscript(id, []);
     const item = stateRef.current.items.find((entry) => entry.id === id);
     const asset = item && (stateRef.current.assets ?? []).find((entry) => entry.src === item.src);
-    if (asset) commands.setAssetTranscription(asset.id, { transcript: undefined, transcribeStatus: 'idle', transcribeError: undefined });
+    if (asset) commands.setAssetTranscription(asset.id, { transcript: undefined, transcribeStatus: undefined, transcribeError: undefined });
     showAppToast(t('文字稿已删除'));
   }, [commands, t]);
 
