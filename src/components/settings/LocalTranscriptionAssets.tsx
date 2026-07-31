@@ -16,6 +16,7 @@ import {
   type LocalModelCacheStatus,
 } from '../../transcript/local-model-cache';
 import type { FieldCtx } from './settingsVendorPane';
+import type { SettingsField } from './settingsSchema';
 
 interface ManifestResponse {
   ok: boolean;
@@ -49,6 +50,10 @@ function selectedModel(ctx: FieldCtx): LocalTranscriptionModel {
 export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
   const t = useT();
   const model = selectedModel(ctx);
+  const route = ctx.values.PREFERRED_TRANSCRIPTION_VENDOR
+    ?? ctx.status?.models.PREFERRED_TRANSCRIPTION_VENDOR
+    ?? '';
+  const localActive = route === 'local';
   const [runtimeChecked, setRuntimeChecked] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -139,6 +144,17 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
 
   return (
     <section style={assetBox}>
+      {!localActive && (
+        <div style={routeWarning}>
+          <span>{t('当前实际转写后端不是本地 Whisper，点击下方按钮启用；保存后才会生效。')}</span>
+          <button type="button" style={actionButton} onClick={() => {
+            const routeField: SettingsField = {
+              name: 'PREFERRED_TRANSCRIPTION_VENDOR', label: '转写后端', kind: 'select',
+            };
+            ctx.onStage(routeField, 'local');
+          }}>{t('启用本地 Whisper')}</button>
+        </div>
+      )}
       <div style={assetRow}>
         <div style={assetText}>
           <b style={assetTitle}>{t('本地运行框架')}</b>
@@ -193,6 +209,19 @@ const assetBox: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 9,
+};
+const routeWarning: React.CSSProperties = {
+  color: '#d66b35',
+  background: 'color-mix(in srgb, #d66b35 10%, transparent)',
+  border: '0.5px solid #d66b35',
+  borderRadius: 5,
+  padding: '7px 9px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  fontSize: 10.5,
+  lineHeight: 1.4,
 };
 const assetRow: React.CSSProperties = {
   display: 'flex',

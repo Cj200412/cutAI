@@ -57,6 +57,8 @@ export default {
   '本地模型': 'Local model',
   '本地运行框架': 'Local runtime',
   '所选模型缓存': 'Selected model cache',
+  '当前实际转写后端不是本地 Whisper，点击下方按钮启用；保存后才会生效。': 'The active transcription backend is not Local Whisper. Enable it below; save for it to take effect.',
+  '启用本地 Whisper': 'Enable Local Whisper',
   '推理设备': 'Inference device',
   '自动（优先 WebGPU）': 'Auto (prefer WebGPU)',
   'WebGPU（显卡）': 'WebGPU (GPU)',
