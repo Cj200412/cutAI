@@ -21,6 +21,7 @@ interface TranscriptPanelProps {
   /** ordered tracks with A1/V1 aliases from EditorCore */
   trackOptions: TranscriptTrackOption[];
   onSetItemTranscript: (id: string, words: TranscriptWord[]) => void;
+  onClearItemTranscript?: (id: string) => void;
   onToggleWord: (id: string, idx: number) => void;
   onCleanScript: (id: string, opts: { silenceFrames?: number; removeFillers: boolean }) => void;
   onSetGapCap: (id: string, afterWordIndex: number, maxMs: number | null) => void;
@@ -34,7 +35,7 @@ const MANY_CLIPS = 10;
 
 export function TranscriptPanel({
   playerRef, fps, items, trackOptions,
-  onSetItemTranscript, onToggleWord, onCleanScript, onSetGapCap, onSetTranscriptPlayOrder, onReorderTrackItems, onClearEdits,
+  onSetItemTranscript, onClearItemTranscript, onToggleWord, onCleanScript, onSetGapCap, onSetTranscriptPlayOrder, onReorderTrackItems, onClearEdits,
   onOpenCaptionStyles,
 }: TranscriptPanelProps) {
   const t = useT();
@@ -174,6 +175,9 @@ export function TranscriptPanel({
         >
           <Icon name="pencil" size={13} />{t('编辑')}
         </button>
+        {onClearItemTranscript && <button type="button" className="cc-tx-btn" disabled={!editable} title={t('删除当前 V1 文字稿')} onClick={() => {
+          if (focusItem && window.confirm(t('确定删除当前文字稿吗？视频不会删除。'))) onClearItemTranscript(focusItem.id);
+        }}><Icon name="trash" size={13} />{t('删除文字稿')}</button>}
         <button
           type="button"
           className="cc-tx-btn"

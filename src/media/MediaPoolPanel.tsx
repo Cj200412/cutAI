@@ -21,6 +21,7 @@ interface MediaPoolPanelProps {
   offlineAssetIds: ReadonlySet<string>;
   onAssetLoadError: (asset: MediaAsset) => void;
   onImport: (file: File, onProgress?: (ratio: number) => void) => Promise<MediaAsset>;
+  onImportSubtitle?: (file: File) => Promise<void>;
   onImportMobile: (record: MobileUploadRecord) => Promise<void>;
   onAddAsset: (asset: MediaAsset) => void;
   onCreateFolder: (name: string, parentId?: string) => string;
@@ -41,11 +42,12 @@ type PromptState = { title: string; initialValue: string; rejectSlash?: boolean;
 type DeleteState = { id: string; name: string; parentId?: string };
 export function MediaPoolPanel({
   semanticScopeId, assets, folders, fps, offlineAssetIds, onAssetLoadError,
-  onImport, onImportMobile, onAddAsset, onCreateFolder, onRenameFolder,
+  onImport, onImportSubtitle, onImportMobile, onAddAsset, onCreateFolder, onRenameFolder,
   onDeleteFolder, onMoveAssets, onRenameAsset, onSetFavorite, onRemoveAsset, onRelinkAsset, onAddSolid,
 }: MediaPoolPanelProps) {
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const subtitleInputRef = useRef<HTMLInputElement>(null);
   const relinkInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   /** 0..1 while uploading; null when idle / unknown */
@@ -190,6 +192,10 @@ export function MediaPoolPanel({
       const list = Array.from(files);
       for (let i = 0; i < list.length; i += 1) {
         const file = list[i]!;
+        if (/\.(srt|vtt|ass)$/i.test(file.name)) {
+          if (onImportSubtitle) await onImportSubtitle(file);
+          continue;
+        }
         await onImport(file, (ratio) => {
           // Multi-file: map each file's progress into a global 0..1 band.
           setUploadRatio((i + ratio) / list.length);
@@ -203,6 +209,14 @@ export function MediaPoolPanel({
       setUploadRatio(null);
       if (inputRef.current) inputRef.current.value = '';
     }
+  };
+  const onPickSubtitle = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file || !onImportSubtitle) return;
+    setError(null);
+    try { await onImportSubtitle(file); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { if (subtitleInputRef.current) subtitleInputRef.current.value = ''; }
   };
   const openPrompt = (next: PromptState) => { setPromptValue(next.initialValue); setPromptState(next); };
   const submitPrompt = () => {
@@ -241,6 +255,7 @@ export function MediaPoolPanel({
   return (
     <div className="cc-media-pool" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void onPick(event.dataTransfer.files); }}>
       <input ref={inputRef} type="file" accept="video/*,image/*,audio/*,.gif,.svg,image/gif,image/svg+xml" multiple hidden onChange={(event) => onPick(event.target.files)} />
+      <input ref={subtitleInputRef} type="file" accept=".srt,.vtt,.ass,text/vtt,application/x-subrip" hidden onChange={(event) => void onPickSubtitle(event.target.files)} />
       <input ref={relinkInputRef} type="file" accept="video/*,image/*,audio/*,.gif,.svg,image/gif,image/svg+xml" hidden onChange={(event) => void onRelinkPick(event.target.files)} />
       <div className="cc-media-toolbar">
         <label className="cc-media-search">
@@ -249,6 +264,7 @@ export function MediaPoolPanel({
         </label>
         <SemanticSearchControls scopeId={semanticScopeId} assets={assets} onResultsChange={onSemanticResults} />
         <button className="cc-media-icon" aria-label={t('上传素材')} title={t('上传素材')} disabled={busy} onClick={() => inputRef.current?.click()}><Icon name="upload" size={19} /></button>
+        {onImportSubtitle && <button className="cc-media-icon" aria-label={t('上传字幕')} title={t('上传字幕并应用到当前片段')} disabled={busy} onClick={() => subtitleInputRef.current?.click()}><Icon name="captions" size={19} /></button>}
         <button className="cc-media-icon" aria-label={t('手机传素材')} title={t('手机传素材')} onClick={() => setMobileUploadOpen(true)}><Icon name="qrCode" size={19} /></button>
         {busy && uploadRatio != null && (
           <span className="cc-media-upload-pct" title={t('上传中')} style={{ fontSize: 11, opacity: 0.75, minWidth: 36, fontVariantNumeric: 'tabular-nums' }}>
