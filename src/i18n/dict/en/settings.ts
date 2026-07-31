@@ -201,6 +201,8 @@ export default {
   '发一条最小请求验证 Key 与地址可用': 'Sends one minimal request to verify the key and endpoint',
   '检查运行框架': 'Check runtime',
   '检查所选模型': 'Check selected model',
+  '下载模型': 'Download model',
+  '下载中 {progress}%': 'Downloading {progress}%',
   '检查中…': 'Checking…',
   '删除本地模型': 'Delete local model',
   '点击确认运行框架是否随应用安装，并查看体积。': 'Click to confirm that the runtime is bundled with the app and view its size.',

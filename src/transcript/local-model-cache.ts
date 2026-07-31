@@ -11,6 +11,11 @@ export interface LocalModelCacheStatus {
   cachedFiles: number;
 }
 
+export interface LocalModelDownloadFile {
+  path: string;
+  bytes: number;
+}
+
 function modelCachePath(model: string): string {
   return `/${model}/resolve/`;
 }
@@ -39,6 +44,33 @@ async function responseBytes(response: Response | undefined): Promise<number> {
 
 function browserCaches(): CacheStorage | null {
   return typeof caches === 'undefined' ? null : caches;
+}
+
+export async function downloadLocalModel(
+  model: LocalTranscriptionModel,
+  files: readonly LocalModelDownloadFile[],
+  onProgress?: (downloadedBytes: number, totalBytes: number) => void,
+  storage: CacheStorage | null = browserCaches(),
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  if (!storage) throw new Error('当前环境不支持浏览器模型缓存');
+  const cache = await storage.open(TRANSFORMERS_CACHE_NAME);
+  const totalBytes = files.reduce((sum, file) => sum + Math.max(0, file.bytes), 0);
+  let downloadedBytes = 0;
+  for (const file of files) {
+    const request = new Request(`https://huggingface.co/${model}/resolve/main/${file.path}`);
+    const cached = await cache.match(request);
+    if (cached) {
+      downloadedBytes += await responseBytes(cached);
+      onProgress?.(downloadedBytes, totalBytes);
+      continue;
+    }
+    const response = await fetchImpl(request);
+    if (!response.ok) throw new Error(`${file.path}: HTTP ${response.status}`);
+    await cache.put(request, response.clone());
+    downloadedBytes += Math.max(file.bytes, await responseBytes(response));
+    onProgress?.(downloadedBytes, totalBytes);
+  }
 }
 
 export async function inspectLocalModelCache(

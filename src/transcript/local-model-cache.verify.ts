@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   TRANSFORMERS_CACHE_NAME,
   deleteLocalModelCache,
+  downloadLocalModel,
   inspectLocalModelCache,
 } from './local-model-cache.ts';
 
@@ -24,6 +25,10 @@ const cache = {
   delete: async (request: RequestInfo | URL) => {
     const url = request instanceof Request ? request.url : String(request);
     return entries.delete(url);
+  },
+  put: async (request: RequestInfo | URL, response: Response) => {
+    const url = request instanceof Request ? request.url : String(request);
+    entries.set(url, response);
   },
 } as unknown as Cache;
 const storage = {
@@ -55,5 +60,13 @@ assert.deepEqual(await deleteLocalModelCache('onnx-community/whisper-tiny', stor
 });
 assert.equal(entries.has(`${basePrefix}onnx/encoder_model_q4.onnx`), true);
 assert.equal(entries.has('https://example.com/unrelated'), true);
+
+const progress: number[] = [];
+await downloadLocalModel('onnx-community/whisper-small', [
+  { path: 'config.json', bytes: 4 },
+], (downloaded, total) => progress.push(Math.round(downloaded / total * 100)), storage,
+  (async () => new Response('1234', { status: 200, headers: { 'content-length': '4' } })) as typeof fetch);
+assert.deepEqual(progress, [100]);
+assert.equal(entries.has('https://huggingface.co/onnx-community/whisper-small/resolve/main/config.json'), true);
 
 console.log('local model cache checks passed');

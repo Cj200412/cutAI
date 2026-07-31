@@ -11,6 +11,7 @@ import { useT } from '../../i18n/locale';
 import { theme } from '../../theme';
 import {
   deleteLocalModelCache,
+  downloadLocalModel,
   inspectLocalModelCache,
   type LocalModelCacheStatus,
 } from '../../transcript/local-model-cache';
@@ -19,6 +20,7 @@ import type { FieldCtx } from './settingsVendorPane';
 interface ManifestResponse {
   ok: boolean;
   expectedBytes?: number;
+  files?: Array<{ path: string; bytes: number }>;
   message?: string;
 }
 
@@ -50,6 +52,9 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
   const [runtimeChecked, setRuntimeChecked] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [checked, setChecked] = useState<CheckedModel | null>(null);
   const shown = checked?.model === model ? checked : null;
 
@@ -85,6 +90,27 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
       await checkModel();
     } finally {
       setDeleteBusy(false);
+    }
+  };
+
+  const downloadModel = async (): Promise<void> => {
+    setDownloadBusy(true);
+    setDownloadProgress(0);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/local-model-assets?model=${encodeURIComponent(model)}`, { cache: 'no-store' });
+      const body = await response.json() as ManifestResponse;
+      if (!response.ok || !body.ok || !body.files?.length) throw new Error(body.message || `HTTP ${response.status}`);
+      await downloadLocalModel(model, body.files, (downloaded, total) => {
+        setDownloadProgress(total > 0 ? Math.min(100, Math.round(downloaded / total * 100)) : 0);
+      });
+      await checkModel();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : String(reason));
+      await checkModel();
+    } finally {
+      setDownloadBusy(false);
+      setDownloadProgress(null);
     }
   };
 
@@ -136,15 +162,19 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
           <span style={{ ...assetHint, color: shown?.cache.state === 'downloaded' ? theme.success : theme.textDim }}>
             {modelMessage}
           </span>
-          {shown?.error && <span style={{ ...assetHint, color: '#f77' }}>{t('大小查询失败：{message}', { message: shown.error })}</span>}
+          {(shown?.error || actionError) && <span style={{ ...assetHint, color: '#f77' }}>{t('大小查询失败：{message}', { message: shown?.error || actionError || '' })}</span>}
         </div>
         <div style={{ display: 'flex', gap: 7, flex: '0 0 auto' }}>
+          <button type="button" style={actionButton} disabled={downloadBusy || modelBusy || deleteBusy || shown?.cache.state === 'downloaded'}
+            onClick={() => { void downloadModel(); }}>
+            {downloadBusy ? t('下载中 {progress}%', { progress: downloadProgress ?? 0 }) : t('下载模型')}
+          </button>
           <button type="button" style={actionButton} disabled={modelBusy || deleteBusy}
             onClick={() => { void checkModel(); }}>
             {modelBusy ? t('检查中…') : t('检查所选模型')}
           </button>
           <button type="button" style={{ ...actionButton, color: '#f77' }}
-            disabled={!shown?.cache.cachedFiles || modelBusy || deleteBusy}
+            disabled={!shown?.cache.cachedFiles || modelBusy || deleteBusy || downloadBusy}
             onClick={() => { void removeModel(); }}>
             {deleteBusy ? t('删除中…') : t('删除本地模型')}
           </button>
