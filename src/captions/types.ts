@@ -155,7 +155,10 @@ export interface CaptionPage {
   end: number; // ms
 }
 
-const SENTENCE_END = /[.!?。！?…,,]$/;
+// Sentence punctuation is the primary caption boundary. ASR may return the
+// mark as a separate token or attached to the preceding token, so normalize
+// whitespace and allow closing quotes/brackets after the mark.
+const SENTENCE_END = /[.!?。！？；：;:…](?:["'”’）)】』」》〉〕】]*)$/;
 const MAX_PHRASE_WORDS = 6;
 const GAP_MS = 700;
 const LINGER_MS = 1500;
@@ -184,7 +187,10 @@ export function paginate(words: TranscriptWord[], pacing: CaptionPacing, maxPhra
     const next = words[i + 1];
     const bigGap = next ? next.start - words[i].end > GAP_MS : false;
     const tooLong = next ? next.start - cur[0]!.start >= MAX_PHRASE_DURATION_MS : false;
-    if (cur.length >= maxPhraseWords || SENTENCE_END.test(words[i].text) || bigGap || tooLong) flush();
+    const sentenceEnd = SENTENCE_END.test(words[i].text.trim());
+    // Do not cut at the word-count limit before a sentence mark. Punctuation
+    // wins; elapsed time is only the fallback for ASR output without marks.
+    if (sentenceEnd || bigGap || tooLong) flush();
   }
   flush();
   return pages;
