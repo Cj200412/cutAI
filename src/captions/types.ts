@@ -159,6 +159,8 @@ const SENTENCE_END = /[.!?。！?…,,]$/;
 const MAX_PHRASE_WORDS = 6;
 const GAP_MS = 700;
 const LINGER_MS = 1500;
+/** Keep automatic caption cards readable even when ASR returns very long phrases. */
+const MAX_PHRASE_DURATION_MS = 4_000;
 
 // Group words into display pages: one word each (word pacing), or short phrases
 // broken on punctuation / length / a big pause (phrase pacing). `breakBefore`
@@ -181,7 +183,8 @@ export function paginate(words: TranscriptWord[], pacing: CaptionPacing, maxPhra
     cur.push(words[i]);
     const next = words[i + 1];
     const bigGap = next ? next.start - words[i].end > GAP_MS : false;
-    if (cur.length >= maxPhraseWords || SENTENCE_END.test(words[i].text) || bigGap) flush();
+    const tooLong = next ? next.start - cur[0]!.start >= MAX_PHRASE_DURATION_MS : false;
+    if (cur.length >= maxPhraseWords || SENTENCE_END.test(words[i].text) || bigGap || tooLong) flush();
   }
   flush();
   return pages;
