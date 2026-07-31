@@ -2,6 +2,7 @@ export const LOCAL_TRANSCRIPTION_MODELS = [
   'onnx-community/whisper-tiny',
   'onnx-community/whisper-base',
   'onnx-community/whisper-small',
+  'onnx-community/whisper-large-v3-turbo',
 ] as const;
 
 export const DEFAULT_LOCAL_TRANSCRIPTION_MODEL = LOCAL_TRANSCRIPTION_MODELS[0];

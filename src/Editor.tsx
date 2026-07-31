@@ -399,6 +399,9 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
           for (const it of stateRef.current.items) {
             if ((it.src === asset.src || (asset.name !== undefined && it.name === asset.name)) && !(it.transcript?.length)) {
               commands.setItemTranscript(it.id, job.words);
+              if (!Object.values(stateRef.current.tracks ?? {}).some((track) => track?.kind === 'caption')) {
+                commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: it.id });
+              }
             }
           }
         } else if (job.status === 'failed') {
@@ -421,6 +424,9 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
     const words = parseSubtitle(await file.text(), extension);
     if (!words.length) { showAppToast(t('字幕文件没有可识别的时间轴'), { error: true }); return; }
     commands.setItemTranscript(target.id, words);
+    if (!(stateRef.current.tracks && Object.keys(stateRef.current.tracks).some((id) => stateRef.current.tracks?.[id]?.kind === 'caption'))) {
+      commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: target.id });
+    }
     const asset = (stateRef.current.assets ?? []).find((entry) => entry.src === target.src);
     if (asset) commands.setAssetTranscription(asset.id, { transcript: words, transcribeStatus: 'done', transcribeError: undefined });
     showAppToast(t('字幕已应用到当前片段'));
