@@ -108,9 +108,9 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
   // projects created before automatic caption creation was added.
   useEffect(() => {
     const hasCaptionTrack = Object.values(state.tracks ?? {}).some((track) => track?.kind === 'caption');
-    const firstTranscribed = state.items.find((item) => (item.transcript?.length ?? 0) > 0);
-    if (!hasCaptionTrack && firstTranscribed) {
-      commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceMode: 'timeline' });
+    const transcribedIds = state.items.filter((item) => (item.transcript?.length ?? 0) > 0).map((item) => item.id);
+    if (!hasCaptionTrack && transcribedIds.length) {
+      commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: transcribedIds[0], sources: transcribedIds, sourceMode: 'item' });
     }
   }, [state.items, state.tracks, commands]);
   const docRef = useRef(doc);
