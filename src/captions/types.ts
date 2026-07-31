@@ -190,7 +190,8 @@ export function paginate(words: TranscriptWord[], pacing: CaptionPacing, maxPhra
     const sentenceEnd = SENTENCE_END.test(words[i].text.trim());
     // Do not cut at the word-count limit before a sentence mark. Punctuation
     // wins; elapsed time is only the fallback for ASR output without marks.
-    if (sentenceEnd || bigGap || tooLong) flush();
+    const upcomingSentence = words.slice(i + 1, i + 5).some((word) => SENTENCE_END.test(word.text.trim()));
+    if (sentenceEnd || bigGap || (tooLong && !upcomingSentence)) flush();
   }
   flush();
   return pages;
