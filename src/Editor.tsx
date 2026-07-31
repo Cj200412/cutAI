@@ -414,6 +414,17 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
     startAssetTranscription(asset);
     if (asset.kind !== 'audio') enqueueVisualAnalysis(asset);
   }, [commands, startAssetTranscription]);
+  const importSubtitle = useCallback(async (file: File): Promise<void> => {
+    const target = selectedItem && (selectedItem.kind === 'video' || selectedItem.kind === 'audio') ? selectedItem : null;
+    if (!target) { showAppToast(t('请先选中视频或音频片段'), { error: true }); return; }
+    const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    const words = parseSubtitle(await file.text(), extension);
+    if (!words.length) { showAppToast(t('字幕文件没有可识别的时间轴'), { error: true }); return; }
+    commands.setItemTranscript(target.id, words);
+    const asset = (stateRef.current.assets ?? []).find((entry) => entry.src === target.src);
+    if (asset) commands.setAssetTranscription(asset.id, { transcript: words, transcribeStatus: 'done', transcribeError: undefined });
+    showAppToast(t('字幕已应用到当前片段'));
+  }, [commands, selectedItem, t]);
 
   const importMobileUpload = useCallback(async (record: MobileUploadRecord) => {
     ingestToPool(await importUploadedMedia(record, stateRef.current.fps));
@@ -614,7 +625,7 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
         <Divider onResize={(dx) => setLibW((w) => clamp(w + dx, ASSETS_MIN_W, Math.max(ASSETS_MIN_W, viewportW - (chatCollapsed ? 46 : chatW) - CANVAS_MIN_W - SPLITTER_TOTAL_W)))} />
       </div>
       <div style={{ gridColumn: 5, gridRow: 2, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
-        <PreviewPanel state={autoGradePreviewState ?? previewState ?? state} playerRef={playerRef} onImport={importToCanvas}
+        <PreviewPanel state={autoGradePreviewState ?? previewState ?? state} playerRef={playerRef} onImport={importToCanvas} onImportSubtitle={importSubtitle}
           projectId={project.id} timelineId={doc.activeTimelineId} reviewState={state} selectedItem={selectedItem}
           reviewRequest={reviewRequest}
           offlineSrcs={offlineSrcs}

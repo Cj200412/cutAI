@@ -27,6 +27,7 @@ interface PreviewPanelProps {
   state: TimelineState;
   playerRef: RefObject<PlayerRef | null>;
   onImport: (file: File) => Promise<void>;
+  onImportSubtitle?: (file: File) => Promise<void>;
   offlineSrcs?: ReadonlySet<string>;
   /** 画布字幕直编(选中框+浮动工具条)。未传(如提案预览态)则只读。 */
   onUpdateCaptions?: (patch: Partial<CaptionsData>, track?: TrackId) => void;
@@ -39,12 +40,13 @@ interface PreviewPanelProps {
 }
 
 export const PreviewPanel = memo(function PreviewPanel({
-  state, playerRef, onImport, offlineSrcs, onUpdateCaptions, onSeedChat,
+  state, playerRef, onImport, onImportSubtitle, offlineSrcs, onUpdateCaptions, onSeedChat,
   projectId, timelineId, reviewState, selectedItem, reviewRequest,
 }: PreviewPanelProps) {
   const t = useT();
   const duration = timelineDuration(state);
   const inputRef = useRef<HTMLInputElement>(null);
+  const subtitleInputRef = useRef<HTMLInputElement>(null);
   const videoBoxRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [showSafe, setShowSafe] = useState(false);
@@ -125,6 +127,16 @@ export const PreviewPanel = memo(function PreviewPanel({
               }}>
               {t('安全框')}
             </button>
+          )}
+          {onImportSubtitle && selectedItem && (selectedItem.kind === 'video' || selectedItem.kind === 'audio') && (
+            <>
+              <input ref={subtitleInputRef} type="file" accept=".srt,.vtt,.ass,text/vtt,application/x-subrip" hidden
+                onChange={(event) => { const file = event.target.files?.[0]; if (file) void onImportSubtitle(file); event.target.value = ''; }} />
+              <button type="button" onClick={() => subtitleInputRef.current?.click()}
+                title={t('上传字幕并应用到当前片段')} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, cursor: 'pointer', border: `0.5px solid ${theme.border}`, background: 'transparent', color: theme.text }}>
+                {t('上传字幕')}
+              </button>
+            </>
           )}
         </div>
       </div>
