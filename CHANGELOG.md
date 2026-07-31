@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added / 新增
 
+- Added subtitle-first workspace ingest: matching SRT, VTT, and ASS sidecar files are parsed into timed transcript words before any Whisper transcription is started.
+  新增字幕优先导入：同名的 SRT、VTT、ASS 字幕会先解析成带时间的文字稿，不再重复调用 Whisper。
 - Added explicit Agent-provider protocol labels, complete operation-URL support for compatible LLM endpoints, and Local Whisper asset management with click-to-check runtime/model sizes plus per-model cache deletion.
   Agent 厂商页新增协议标注，兼容 LLM 地址可直接填写完整请求 URL；本地 Whisper 新增运行框架/模型大小检查与按模型删除缓存。
 - Added configurable OpenAI-compatible image and TTS endpoints, including optional authentication, custom model discovery, and local no-key services; generation vendors with provider-specific protocols now accept free-form compatible model IDs.

@@ -23,6 +23,7 @@ import { importUploadedMedia } from './media/mobileImport';
 import type { MobileUploadRecord } from './media/mobileUploadApi';
 import { resumeOpenGenerationJobs } from './persist/jobRegistryStore';
 import { enqueueTranscription, shouldTranscribe } from './transcript/transcribe-jobs';
+import { parseSubtitle, stemOf } from './transcript/subtitleImport';
 import { enqueueVisualAnalysis, refreshVisualAnalysis } from './agent/progress/visual-analysis-jobs';
 import type { MediaAsset } from './editor/types';
 import { AUDIO_ASSETS } from './audio/library';
@@ -314,8 +315,11 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
       const media = await window.cutaiDesktop!.rescanWorkspace(project.rootPath!);
       if (!alive) return;
       const known = new Set(docRef.current.assets.map((asset) => asset.src));
-      for (const item of media) {
-        if (item.kind === 'subtitle' || known.has(item.url)) continue;
+      const mediaEntries = media.filter(
+        (item): item is typeof item & { kind: Exclude<typeof item.kind, 'subtitle'> } => item.kind !== 'subtitle',
+      );
+      for (const item of mediaEntries) {
+        if (known.has(item.url)) continue;
         commands.addAsset({
           id: item.id,
           name: item.name,
@@ -323,6 +327,18 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
           src: item.url,
           durationInFrames: item.kind === 'image' || item.kind === 'gif' || item.kind === 'svg' ? 150 : 30,
         });
+      }
+      for (const subtitle of media.filter((item) => item.kind === 'subtitle')) {
+        const target = mediaEntries.find((item) => stemOf(item.name) === stemOf(subtitle.name)
+          && (item.kind === 'video' || item.kind === 'audio'));
+        if (!target) continue;
+        const asset = docRef.current.assets.find((entry) => entry.src === target.url);
+        if (asset?.transcript?.length) continue;
+        try {
+          const source = await (await fetch(subtitle.url)).text();
+          const words = parseSubtitle(source, subtitle.name.slice(subtitle.name.lastIndexOf('.')));
+          if (words.length) commands.setAssetTranscription(asset?.id ?? target.id, { transcript: words, transcribeStatus: 'done', transcribeError: undefined });
+        } catch { /* unreadable sidecar subtitle must not block media ingest */ }
       }
     };
     void scan().catch(() => {});
