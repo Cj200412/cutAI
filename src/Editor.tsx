@@ -107,10 +107,11 @@ export default function Editor({ initial, project, onHome, onRename }: EditorPro
   // Keep transcription and captions as one source of truth. This also repairs
   // projects created before automatic caption creation was added.
   useEffect(() => {
-    const hasCaptionTrack = Object.values(state.tracks ?? {}).some((track) => track?.kind === 'caption');
     const transcribedIds = state.items.filter((item) => (item.transcript?.length ?? 0) > 0).map((item) => item.id);
-    if (!hasCaptionTrack && transcribedIds.length) {
-      commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: transcribedIds[0], sources: transcribedIds, sourceMode: 'item' });
+    const captionTrack = Object.entries(state.tracks ?? {}).find(([, track]) => track?.kind === 'caption');
+    const hasUsableCaptions = !!captionTrack?.[1]?.captions && (!!captionTrack[1].captions?.sourceItemId || !!captionTrack[1].captions?.sources?.length || !!captionTrack[1].captions?.sourceMode);
+    if (transcribedIds.length && !hasUsableCaptions) {
+      commands.setCaptions({ enabled: true, template: 'black-bar', pacing: 'phrase', sourceItemId: transcribedIds[0], sources: transcribedIds, sourceMode: 'item' }, captionTrack?.[0]);
     }
   }, [state.items, state.tracks, commands]);
   const docRef = useRef(doc);
