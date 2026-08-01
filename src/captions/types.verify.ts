@@ -13,4 +13,6 @@ assert.ok(pages.every((page) => page.end - page.start <= 4_000), 'caption pages 
 const punctuated = words.map((word, i) => i === 6 ? { ...word, text: `${word.text}。` } : word);
 const punctuatedPages = paginate(punctuated, 'phrase', 6);
 assert.equal(punctuatedPages[0]?.words.at(-1)?.text, '词7。', 'punctuation wins over word-count fallback');
+const commaWords = words.map((word, i) => i === 6 ? { ...word, text: `${word.text}，` } : word);
+assert.equal(paginate(commaWords, 'phrase', 6)[0]?.words.at(-1)?.text, '词7，', 'Chinese comma is a caption boundary');
 console.log('captions.types.check: ok');

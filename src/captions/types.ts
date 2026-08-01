@@ -158,7 +158,7 @@ export interface CaptionPage {
 // Sentence punctuation is the primary caption boundary. ASR may return the
 // mark as a separate token or attached to the preceding token, so normalize
 // whitespace and allow closing quotes/brackets after the mark.
-const SENTENCE_END = /[.!?。！？；：;:…](?:["'”’）)】』」》〉〕】]*)$/;
+const SENTENCE_END = /[.!?。！？；：，、,;:…](?:["'”’）)】』」》〉〕】]*)$/;
 const MAX_PHRASE_WORDS = 6;
 const GAP_MS = 700;
 const LINGER_MS = 1500;
