@@ -76,7 +76,8 @@ async function run(request: TranscribeRequest): Promise<void> {
         chunk_length_s: Math.min(30, window), stride_length_s: Math.min(2, window / 3),
       });
       const text = output.text ?? '';
-      const boundary = /[。！？；.!?;]\s*$/.test(text.trim());
+      // Keep growing until Whisper returns a real sentence/clause boundary.
+      const boundary = /[。！？；：，、.!?;:…](?:["'”’）)】』」》〉〕】]*)$/.test(text.trim());
       if (boundary || cursor + window >= durationSeconds || window >= 30) break;
       window = Math.min(window + 5, durationSeconds - cursor);
     }
