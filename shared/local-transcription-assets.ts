@@ -8,11 +8,28 @@ import {
  * with the installed Transformers.js browser bundle and ONNX Runtime WASM.
  */
 export const LOCAL_TRANSCRIPTION_RUNTIME = {
+  id: 'transformers-web',
   label: 'Transformers.js + ONNX Runtime Web',
   version: '3.8.1',
   bytes: 22_484_192,
-  removable: false,
+  /** The package is bundled, but the loaded Worker/runtime instance is
+   * replaceable and unloadable from the running app. */
+  unloadable: true,
+  packageRemovable: false,
 } as const;
+
+export const LOCAL_TRANSCRIPTION_EXECUTION_BACKENDS = [
+  {
+    id: 'wasm',
+    label: 'ONNX Runtime Web · WASM（CPU）',
+    extraBytes: 0,
+  },
+  {
+    id: 'webgpu',
+    label: 'ONNX Runtime Web · WebGPU（显卡）',
+    extraBytes: 0,
+  },
+] as const;
 
 export const LOCAL_TRANSCRIPTION_REQUIRED_MODEL_FILES = [
   'onnx/encoder_model_q4.onnx',

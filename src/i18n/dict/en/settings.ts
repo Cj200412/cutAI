@@ -202,6 +202,21 @@ export default {
   '（按当前输入测试，记得保存）': ' (tested with current input — remember to save)',
   '发一条最小请求验证 Key 与地址可用': 'Sends one minimal request to verify the key and endpoint',
   '检查运行框架': 'Check runtime',
+  '替换执行后端': 'Replace execution backend',
+  '卸载运行实例': 'Unload runtime instance',
+  '恢复运行框架': 'Restore runtime',
+  '处理中…': 'Working…',
+  '运行实例已启用': 'Runtime instance enabled',
+  '运行实例已卸载': 'Runtime instance unloaded',
+  '当前后端：{backend}': 'Current backend: {backend}',
+  '点击检查运行框架状态；可切换 WASM/WebGPU，或卸载当前运行实例。':
+    'Check runtime status. Switch between WASM/WebGPU or unload the current runtime instance.',
+  'ONNX Runtime Web · WASM（CPU）': 'ONNX Runtime Web · WASM (CPU)',
+  'ONNX Runtime Web · WebGPU（显卡）': 'ONNX Runtime Web · WebGPU (GPU)',
+  '卸载本地转写运行框架实例吗？这会终止正在进行的本地转写并释放模型内存；应用代码包不会删除。':
+    'Unload the local transcription runtime instance? This stops active local transcription and releases model memory; the app package is not deleted.',
+  '当前环境没有 WebGPU，无法切换；请保留 WASM（CPU）后端。':
+    'WebGPU is unavailable in this environment. Keep the WASM (CPU) backend.',
   '检查所选模型': 'Check selected model',
   '下载模型': 'Download model',
   '下载中 {progress}%': 'Downloading {progress}%',
@@ -214,6 +229,7 @@ export default {
   '字幕已应用到当前片段': 'Subtitles applied to the current clip',
   '点击确认运行框架是否随应用安装，并查看体积。': 'Click to confirm that the runtime is bundled with the app and view its size.',
   '已随应用安装 · {name} {version} · {size}': 'Installed with the app · {name} {version} · {size}',
+  '{state} · {name} {version} · {size} · 当前后端：{backend}': '{state} · {name} {version} · {size} · Current backend: {backend}',
   '点击检查所选模型是否已下载，并读取预计下载大小。': 'Click to check whether the selected model is downloaded and load its estimated size.',
   '大小暂时无法读取': 'size currently unavailable',
   '预计 {size}': 'estimated {size}',
@@ -226,6 +242,8 @@ export default {
     'Delete the local cache for {model}? It will be downloaded again next time.',
   '仅删除所选模型的 Transformers.js 缓存；运行框架随应用保留。':
     'Only the selected model’s Transformers.js cache is deleted; the bundled runtime remains installed.',
+  '模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。':
+    'Model caches can be deleted individually or all at once. Unloading the runtime instance releases the Worker and model memory; bundled runtime code remains and reloads on demand.',
   '本次设置': 'This session',
   '取消清除': 'Undo clear',
   '清除': 'Clear',

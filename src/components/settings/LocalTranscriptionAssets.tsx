@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import {
   LOCAL_TRANSCRIPTION_RUNTIME,
+  LOCAL_TRANSCRIPTION_EXECUTION_BACKENDS,
   isLocalTranscriptionModel,
 } from '../../../shared/local-transcription-assets';
 import {
   DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+  normalizeLocalTranscriptionDevice,
   type LocalTranscriptionModel,
 } from '../../../shared/transcription-providers';
 import { useT } from '../../i18n/locale';
@@ -18,6 +20,12 @@ import {
   type LocalModelCacheEntry,
   type LocalModelCacheStatus,
 } from '../../transcript/local-model-cache';
+import {
+  installLocalTranscriptionRuntime,
+  inspectLocalTranscriptionRuntime,
+  unloadLocalTranscriptionRuntime,
+  type LocalTranscriptionRuntimeState,
+} from '../../transcript/local-whisper';
 import type { FieldCtx } from './settingsVendorPane';
 import type { SettingsField } from './settingsSchema';
 
@@ -56,11 +64,22 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
     ?? ctx.status?.models.TRANSCRIPTION_LOCAL_MODEL
     ?? '';
   const model = selectedModel(ctx);
+  const configuredDevice = ctx.values.TRANSCRIPTION_LOCAL_DEVICE
+    ?? ctx.status?.models.TRANSCRIPTION_LOCAL_DEVICE
+    ?? '';
+  const device = normalizeLocalTranscriptionDevice(configuredDevice);
+  const effectiveDevice = device === 'auto'
+    ? (typeof navigator !== 'undefined' && 'gpu' in navigator ? 'webgpu' : 'wasm')
+    : device;
+  const backend = LOCAL_TRANSCRIPTION_EXECUTION_BACKENDS.find((entry) => entry.id === effectiveDevice)
+    ?? LOCAL_TRANSCRIPTION_EXECUTION_BACKENDS[0];
   const route = ctx.values.PREFERRED_TRANSCRIPTION_VENDOR
     ?? ctx.status?.models.PREFERRED_TRANSCRIPTION_VENDOR
     ?? '';
   const localActive = route === 'local';
   const [runtimeChecked, setRuntimeChecked] = useState(false);
+  const [runtimeState, setRuntimeState] = useState<LocalTranscriptionRuntimeState>(() => inspectLocalTranscriptionRuntime());
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
@@ -142,6 +161,62 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
     }
   };
 
+  const replaceRuntime = async (): Promise<void> => {
+    const next = effectiveDevice === 'webgpu' ? 'wasm' : 'webgpu';
+    const field: SettingsField = {
+      name: 'TRANSCRIPTION_LOCAL_DEVICE', label: '推理设备', kind: 'select',
+    };
+    setRuntimeBusy(true);
+    try {
+      if (next === 'webgpu') {
+        const gpu = typeof navigator !== 'undefined'
+          ? (navigator as Navigator & { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu
+          : undefined;
+        let available = Boolean(gpu);
+        if (available && gpu?.requestAdapter) {
+          try {
+            available = Boolean(await gpu.requestAdapter());
+          } catch {
+            available = false;
+          }
+        }
+        if (!available) {
+          setActionError(t('当前环境没有 WebGPU，无法切换；请保留 WASM（CPU）后端。'));
+          return;
+        }
+      }
+      unloadLocalTranscriptionRuntime();
+      installLocalTranscriptionRuntime();
+      ctx.onStage(field, next);
+      setRuntimeState(inspectLocalTranscriptionRuntime());
+      setRuntimeChecked(true);
+      setActionError(null);
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
+  const toggleRuntime = (): void => {
+    if (runtimeState === 'uninstalled') {
+      installLocalTranscriptionRuntime();
+      setRuntimeState(inspectLocalTranscriptionRuntime());
+      setRuntimeChecked(true);
+      setActionError(null);
+      return;
+    }
+    if (!window.confirm(t('卸载本地转写运行框架实例吗？这会终止正在进行的本地转写并释放模型内存；应用代码包不会删除。'))) return;
+    setRuntimeBusy(true);
+    try {
+      unloadLocalTranscriptionRuntime();
+      setRuntimeState(inspectLocalTranscriptionRuntime());
+      setRuntimeChecked(true);
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
   const modelMessage = (() => {
     if (!shown) return t('点击检查所选模型是否已下载，并读取预计下载大小。');
     const expected = shown.expectedBytes == null ? t('大小暂时无法读取') : t('预计 {size}', {
@@ -197,17 +272,31 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
           <b style={assetTitle}>{t('本地运行框架')}</b>
           <span style={assetHint}>
             {runtimeChecked
-              ? t('已随应用安装 · {name} {version} · {size}', {
+              ? t('{state} · {name} {version} · {size} · 当前后端：{backend}', {
+                  state: runtimeState === 'installed' ? t('运行实例已启用') : t('运行实例已卸载'),
                   name: LOCAL_TRANSCRIPTION_RUNTIME.label,
                   version: LOCAL_TRANSCRIPTION_RUNTIME.version,
                   size: formatBytes(LOCAL_TRANSCRIPTION_RUNTIME.bytes),
+                  backend: t(backend.label),
                 })
-              : t('点击确认运行框架是否随应用安装，并查看体积。')}
+              : t('点击检查运行框架状态；可切换 WASM/WebGPU，或卸载当前运行实例。')}
           </span>
         </div>
-        <button type="button" style={actionButton} onClick={() => setRuntimeChecked(true)}>
-          {t('检查运行框架')}
-        </button>
+        <div style={{ display: 'flex', gap: 7, flex: '0 0 auto' }}>
+          <button type="button" style={actionButton} disabled={runtimeBusy}
+            onClick={() => { setRuntimeState(inspectLocalTranscriptionRuntime()); setRuntimeChecked(true); }}>
+            {t('检查运行框架')}
+          </button>
+          <button type="button" style={actionButton} disabled={runtimeBusy}
+            onClick={() => { void replaceRuntime(); }}>
+            {runtimeBusy ? t('处理中…') : t('替换执行后端')}
+          </button>
+          <button type="button" style={{ ...actionButton, color: runtimeState === 'installed' ? '#f77' : theme.success }}
+            disabled={runtimeBusy}
+            onClick={toggleRuntime}>
+            {runtimeState === 'installed' ? t('卸载运行实例') : t('恢复运行框架')}
+          </button>
+        </div>
       </div>
       <div style={{ ...assetRow, borderTop: `0.5px solid ${theme.border}`, paddingTop: 9 }}>
         <div style={assetText}>
@@ -250,7 +339,7 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
           </button>
         </div>
       )}
-      <span style={footnote}>{t('模型缓存可逐个或全部删除；Transformers.js + ONNX 运行框架随应用打包，不能单独卸载，卸载应用时一并移除。')}</span>
+      <span style={footnote}>{t('模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。')}</span>
     </section>
   );
 }
@@ -282,6 +371,7 @@ const assetRow: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
+  flexWrap: 'wrap',
 };
 const assetText: React.CSSProperties = {
   minWidth: 0,

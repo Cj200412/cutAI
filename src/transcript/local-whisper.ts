@@ -12,9 +12,72 @@ interface Pending {
   onProgress?: () => void;
 }
 
+export type LocalTranscriptionRuntimeState = 'installed' | 'uninstalled';
+
+const RUNTIME_STATE_KEY = 'cutai.local-transcription-runtime';
+let runtimeState: LocalTranscriptionRuntimeState = 'installed';
+
 let worker: Worker | null = null;
 let nextId = 1;
 const pending = new Map<number, Pending>();
+
+function runtimeStorage(): Storage | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function inspectLocalTranscriptionRuntime(): LocalTranscriptionRuntimeState {
+  const storage = runtimeStorage();
+  if (!storage) return runtimeState;
+  try {
+    const stored = storage.getItem(RUNTIME_STATE_KEY);
+    runtimeState = stored === 'uninstalled' ? 'uninstalled' : 'installed';
+  } catch {
+    // A browser can expose localStorage but still reject reads (for example
+    // in a blocked/private storage context). Keep the in-memory state.
+  }
+  return runtimeState;
+}
+
+function setRuntimeState(next: LocalTranscriptionRuntimeState): void {
+  runtimeState = next;
+  const storage = runtimeStorage();
+  if (!storage) return;
+  try {
+    if (next === 'installed') storage.removeItem(RUNTIME_STATE_KEY);
+    else storage.setItem(RUNTIME_STATE_KEY, next);
+  } catch {
+    // Storage may be unavailable in a restricted browser context. The
+    // in-memory state still applies until the page is reloaded.
+  }
+}
+
+function terminateWorker(reason: Error): number {
+  const active = pending.size;
+  worker?.terminate();
+  worker = null;
+  for (const job of pending.values()) job.reject(reason);
+  pending.clear();
+  return active;
+}
+
+/** Unload the active local ASR Worker and release its loaded model/runtime.
+ * The bundled package remains part of the application and is lazily recreated
+ * after installLocalTranscriptionRuntime() or the next app session. */
+export function unloadLocalTranscriptionRuntime(): { abortedJobs: number } {
+  setRuntimeState('uninstalled');
+  return { abortedJobs: terminateWorker(new Error('本地转写运行框架已卸载，请先恢复运行框架')) };
+}
+
+/** Re-enable lazy loading of the bundled runtime. No model is loaded until the
+ * next actual transcription request. */
+export function installLocalTranscriptionRuntime(): void {
+  setRuntimeState('installed');
+}
 
 function transcriptWorker(): Worker {
   if (worker) return worker;
@@ -112,7 +175,13 @@ export async function transcribeLocalBlob(
   device: LocalTranscriptionDevice,
   onProgress?: () => void,
 ): Promise<TranscriptResult> {
+  if (inspectLocalTranscriptionRuntime() === 'uninstalled') {
+    throw new Error('本地转写运行框架已卸载，请到“设置 → 素材 · 转写”恢复运行框架后重试');
+  }
   const audio = await decodeMono16k(blob);
+  if (inspectLocalTranscriptionRuntime() === 'uninstalled') {
+    throw new Error('本地转写运行框架已卸载，请到“设置 → 素材 · 转写”恢复运行框架后重试');
+  }
   const id = nextId++;
   const promise = new Promise<TranscriptResult>((resolve, reject) => {
     pending.set(id, { resolve, reject, onProgress });

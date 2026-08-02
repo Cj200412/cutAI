@@ -7,7 +7,12 @@ import {
   trimApiBaseUrl,
 } from '../../shared/transcription-providers.ts';
 import { compatibleTranscriptResult } from './openai-compatible.ts';
-import { localWhisperResult } from './local-whisper.ts';
+import {
+  inspectLocalTranscriptionRuntime,
+  installLocalTranscriptionRuntime,
+  localWhisperResult,
+  unloadLocalTranscriptionRuntime,
+} from './local-whisper.ts';
 
 assert.equal(normalizeTranscriptionProvider(undefined), 'assemblyai');
 assert.equal(normalizeTranscriptionProvider('local'), 'local');
@@ -40,6 +45,12 @@ assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:
 assert.deepEqual(localWhisperResult({ text: '', chunks: [] }), {
   text: '', words: [], utterances: [],
 });
+
+assert.equal(inspectLocalTranscriptionRuntime(), 'installed');
+assert.deepEqual(unloadLocalTranscriptionRuntime(), { abortedJobs: 0 });
+assert.equal(inspectLocalTranscriptionRuntime(), 'uninstalled');
+installLocalTranscriptionRuntime();
+assert.equal(inspectLocalTranscriptionRuntime(), 'installed');
 
 {
   const result = compatibleTranscriptResult({

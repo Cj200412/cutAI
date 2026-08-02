@@ -64,5 +64,7 @@ const [transformersBundle, onnxWasm] = await Promise.all([
 ]);
 assert.equal(LOCAL_TRANSCRIPTION_RUNTIME.version, transformersPackage.version);
 assert.equal(LOCAL_TRANSCRIPTION_RUNTIME.bytes, transformersBundle.size + onnxWasm.size);
+assert.equal(LOCAL_TRANSCRIPTION_RUNTIME.unloadable, true);
+assert.equal(LOCAL_TRANSCRIPTION_RUNTIME.packageRemovable, false);
 
 console.log('local model asset checks passed');
