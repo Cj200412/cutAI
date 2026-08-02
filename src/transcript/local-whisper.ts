@@ -68,6 +68,12 @@ export function localWhisperResult(result: WorkerResult): TranscriptResult {
       speaker: null,
     }));
   });
+  // A genuinely silent clip is a valid empty transcript, not a model failure.
+  // Keep rejecting non-empty text without timestamps because it cannot become
+  // editable, time-aligned captions.
+  if (!words.length && !(result.text ?? '').trim()) {
+    return { text: '', words: [], utterances: [] };
+  }
   if (!words.length) throw new Error('本地模型没有返回分段时间戳，请更换 Whisper 模型后重试');
   return { text: result.text || words.map((word) => word.text).join(''), words, utterances: [] };
 }

@@ -2,8 +2,9 @@ import {
   LOCAL_TRANSCRIPTION_REQUIRED_MODEL_FILES,
 } from '../../shared/local-transcription-assets';
 import {
-  LOCAL_TRANSCRIPTION_MODELS,
+  LOCAL_TRANSCRIPTION_CACHE_MODELS,
   type LocalTranscriptionModel,
+  type LocalTranscriptionCacheModel,
 } from '../../shared/transcription-providers';
 
 export const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
@@ -20,7 +21,7 @@ export interface LocalModelDownloadFile {
 }
 
 export interface LocalModelCacheEntry {
-  model: LocalTranscriptionModel;
+  model: LocalTranscriptionCacheModel;
   cache: LocalModelCacheStatus;
 }
 
@@ -82,7 +83,7 @@ export async function downloadLocalModel(
 }
 
 export async function inspectLocalModelCache(
-  model: LocalTranscriptionModel,
+  model: LocalTranscriptionCacheModel,
   storage: CacheStorage | null = browserCaches(),
 ): Promise<LocalModelCacheStatus> {
   if (!storage) return { state: 'unavailable', cachedBytes: 0, cachedFiles: 0 };
@@ -100,7 +101,7 @@ export async function inspectLocalModelCache(
 }
 
 export async function deleteLocalModelCache(
-  model: LocalTranscriptionModel,
+  model: LocalTranscriptionCacheModel,
   storage: CacheStorage | null = browserCaches(),
 ): Promise<{ deletedFiles: number; freedBytes: number }> {
   if (!storage) return { deletedFiles: 0, freedBytes: 0 };
@@ -120,7 +121,7 @@ export async function deleteLocalModelCache(
 export async function inspectAllLocalModelCaches(
   storage: CacheStorage | null = browserCaches(),
 ): Promise<LocalModelCacheEntry[]> {
-  return Promise.all(LOCAL_TRANSCRIPTION_MODELS.map(async (model) => ({
+  return Promise.all(LOCAL_TRANSCRIPTION_CACHE_MODELS.map(async (model) => ({
     model,
     cache: await inspectLocalModelCache(model, storage),
   })));
@@ -131,7 +132,7 @@ export async function inspectAllLocalModelCaches(
 export async function deleteAllLocalModelCaches(
   storage: CacheStorage | null = browserCaches(),
 ): Promise<{ deletedFiles: number; freedBytes: number }> {
-  const results = await Promise.all(LOCAL_TRANSCRIPTION_MODELS.map((model) => deleteLocalModelCache(model, storage)));
+  const results = await Promise.all(LOCAL_TRANSCRIPTION_CACHE_MODELS.map((model) => deleteLocalModelCache(model, storage)));
   return results.reduce((total, result) => ({
     deletedFiles: total.deletedFiles + result.deletedFiles,
     freedBytes: total.freedBytes + result.freedBytes,

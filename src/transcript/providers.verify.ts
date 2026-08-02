@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
   normalizeLocalTranscriptionDevice,
+  normalizeLocalTranscriptionModel,
   normalizeTranscriptionProvider,
   trimApiBaseUrl,
 } from '../../shared/transcription-providers.ts';
@@ -12,7 +13,9 @@ assert.equal(normalizeTranscriptionProvider(undefined), 'assemblyai');
 assert.equal(normalizeTranscriptionProvider('local'), 'local');
 assert.equal(normalizeTranscriptionProvider('custom'), 'custom');
 assert.equal(normalizeTranscriptionProvider('unknown'), 'assemblyai');
-assert.equal(DEFAULT_LOCAL_TRANSCRIPTION_MODEL, 'onnx-community/whisper-small-chinese-2-ONNX');
+assert.equal(DEFAULT_LOCAL_TRANSCRIPTION_MODEL, 'onnx-community/whisper-small');
+assert.equal(normalizeLocalTranscriptionModel('onnx-community/whisper-small-chinese-2-ONNX'), DEFAULT_LOCAL_TRANSCRIPTION_MODEL);
+assert.equal(normalizeLocalTranscriptionModel('onnx-community/whisper-base'), 'onnx-community/whisper-base');
 assert.equal(normalizeLocalTranscriptionDevice('webgpu'), 'webgpu');
 assert.equal(normalizeLocalTranscriptionDevice('bad'), 'auto');
 assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:8000/v1');
@@ -33,6 +36,10 @@ assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:
     { text: '界', start: 1050, end: 1400, speaker: null },
   ]);
 }
+
+assert.deepEqual(localWhisperResult({ text: '', chunks: [] }), {
+  text: '', words: [], utterances: [],
+});
 
 {
   const result = compatibleTranscriptResult({

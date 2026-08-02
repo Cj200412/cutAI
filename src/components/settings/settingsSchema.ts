@@ -334,7 +334,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
             key: 'transcription/local',
             vendor: 'localwhisper',
             title: '本地 Whisper',
-            note: '音频与文字均不离开本机。中文优先推荐 whisper-small-chinese-2-ONNX；首次转写会从 Hugging Face 下载所选 ONNX 模型并缓存，可在下方检查、下载或删除任意模型。',
+            note: '音频与文字均不离开本机。中文建议先用 whisper-small；这些模型使用当前 Transformers.js 可兼容的 ONNX 导出格式。首次转写会从 Hugging Face 下载并缓存，可在下方检查、下载或删除任意模型。',
             fields: [
               modelSelect('TRANSCRIPTION_LOCAL_MODEL', '本地模型', DEFAULT_LOCAL_TRANSCRIPTION_MODEL, LOCAL_TRANSCRIPTION_MODELS),
               {

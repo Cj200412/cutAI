@@ -9,8 +9,8 @@ import type { TranscriptResult } from './types';
 import { getMediaBlob } from '../persist/mediaBlobStore';
 import {
   DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
-  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
   normalizeLocalTranscriptionDevice,
+  normalizeLocalTranscriptionModel,
   normalizeTranscriptionProvider,
   type TranscriptionProvider,
 } from '../../shared/transcription-providers';
@@ -68,7 +68,7 @@ export async function loadTranscriptionRuntimeConfig(): Promise<TranscriptionRun
   }
   return {
     provider,
-    localModel: status.models?.TRANSCRIPTION_LOCAL_MODEL || DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+    localModel: normalizeLocalTranscriptionModel(status.models?.TRANSCRIPTION_LOCAL_MODEL),
     localDevice: normalizeLocalTranscriptionDevice(status.models?.TRANSCRIPTION_LOCAL_DEVICE),
     customModel: status.models?.TRANSCRIPTION_CUSTOM_MODEL || DEFAULT_CUSTOM_TRANSCRIPTION_MODEL,
   };

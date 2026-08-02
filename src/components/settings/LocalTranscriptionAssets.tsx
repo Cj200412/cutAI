@@ -52,6 +52,9 @@ function selectedModel(ctx: FieldCtx): LocalTranscriptionModel {
 
 export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
   const t = useT();
+  const configuredModel = ctx.values.TRANSCRIPTION_LOCAL_MODEL
+    ?? ctx.status?.models.TRANSCRIPTION_LOCAL_MODEL
+    ?? '';
   const model = selectedModel(ctx);
   const route = ctx.values.PREFERRED_TRANSCRIPTION_VENDOR
     ?? ctx.status?.models.PREFERRED_TRANSCRIPTION_VENDOR
@@ -173,6 +176,20 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
             };
             ctx.onStage(routeField, 'local');
           }}>{t('启用本地 Whisper')}</button>
+        </div>
+      )}
+      {configuredModel && !isLocalTranscriptionModel(configuredModel) && (
+        <div style={routeWarning}>
+          <span>{t('检测到旧版本地模型 {model}，它与当前运行框架不兼容；转写会改用 {fallback}。', {
+            model: configuredModel,
+            fallback: DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+          })}</span>
+          <button type="button" style={actionButton} onClick={() => {
+            const modelField: SettingsField = {
+              name: 'TRANSCRIPTION_LOCAL_MODEL', label: '本地模型', kind: 'select',
+            };
+            ctx.onStage(modelField, DEFAULT_LOCAL_TRANSCRIPTION_MODEL);
+          }}>{t('切换到兼容模型')}</button>
         </div>
       )}
       <div style={assetRow}>

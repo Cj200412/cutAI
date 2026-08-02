@@ -18,7 +18,7 @@ import {
   type LlmProvider,
 } from '../shared/llm-providers.ts';
 import {
-  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
+  normalizeLocalTranscriptionModel,
   trimApiBaseUrl,
 } from '../shared/transcription-providers.ts';
 import { firecrawlApiBase } from '../shared/firecrawl-config.ts';
@@ -238,7 +238,7 @@ export const PROBES: Record<string, ProbeDef> = {
   'transcription/local': {
     needs: [[]],
     run: (get) => {
-      const model = get('TRANSCRIPTION_LOCAL_MODEL') || DEFAULT_LOCAL_TRANSCRIPTION_MODEL;
+      const model = normalizeLocalTranscriptionModel(get('TRANSCRIPTION_LOCAL_MODEL'));
       return fetch(`https://huggingface.co/${model}/resolve/main/config.json`, { signal: t() });
     },
     okText: () => '模型仓库可访问 · 首次转写时会下载并缓存在本机',
