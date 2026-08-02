@@ -244,6 +244,8 @@ export default {
     'Only the selected model’s Transformers.js cache is deleted; the bundled runtime remains installed.',
   '模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。':
     'Model caches can be deleted individually or all at once. Unloading the runtime instance releases the Worker and model memory; bundled runtime code remains and reloads on demand.',
+  '模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。切换执行后端后请点击设置底部“保存”，否则只在当前设置页暂存。':
+    'Model caches can be deleted individually or all at once. Unloading the runtime instance releases the Worker and model memory; bundled runtime code remains and reloads on demand. After switching the execution backend, click “Save” at the bottom of Settings or the change remains staged only on this page.',
   '本次设置': 'This session',
   '取消清除': 'Undo clear',
   '清除': 'Clear',

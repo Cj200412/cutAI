@@ -339,7 +339,7 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
           </button>
         </div>
       )}
-      <span style={footnote}>{t('模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。')}</span>
+      <span style={footnote}>{t('模型缓存可逐个或全部删除；卸载运行实例会释放 Worker 与模型内存，应用包中的运行框架代码保留，恢复后按需重新加载。切换执行后端后请点击设置底部“保存”，否则只在当前设置页暂存。')}</span>
     </section>
   );
 }
