@@ -11,8 +11,11 @@ import { useT } from '../../i18n/locale';
 import { theme } from '../../theme';
 import {
   deleteLocalModelCache,
+  deleteAllLocalModelCaches,
   downloadLocalModel,
+  inspectAllLocalModelCaches,
   inspectLocalModelCache,
+  type LocalModelCacheEntry,
   type LocalModelCacheStatus,
 } from '../../transcript/local-model-cache';
 import type { FieldCtx } from './settingsVendorPane';
@@ -59,14 +62,18 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [deleteAllBusy, setDeleteAllBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [checked, setChecked] = useState<CheckedModel | null>(null);
+  const [allCaches, setAllCaches] = useState<LocalModelCacheEntry[]>([]);
   const shown = checked?.model === model ? checked : null;
 
   const checkModel = async (): Promise<void> => {
     setModelBusy(true);
     try {
       const cache = await inspectLocalModelCache(model);
+      const caches = await inspectAllLocalModelCaches();
+      setAllCaches(caches);
       let expectedBytes: number | null = null;
       let error: string | null = null;
       try {
@@ -116,6 +123,19 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
     } finally {
       setDownloadBusy(false);
       setDownloadProgress(null);
+    }
+  };
+
+  const removeAllModels = async (): Promise<void> => {
+    const cached = allCaches.filter((entry) => entry.cache.cachedFiles > 0);
+    if (!cached.length) return;
+    if (!window.confirm(t('确定删除全部本地转写模型缓存吗？下次使用时会重新下载。'))) return;
+    setDeleteAllBusy(true);
+    try {
+      await deleteAllLocalModelCaches();
+      await checkModel();
+    } finally {
+      setDeleteAllBusy(false);
     }
   };
 
@@ -196,7 +216,24 @@ export function LocalTranscriptionAssets({ ctx }: { ctx: FieldCtx }) {
           </button>
         </div>
       </div>
-      <span style={footnote}>{t('仅删除所选模型的 Transformers.js 缓存；运行框架随应用保留。')}</span>
+      {allCaches.some((entry) => entry.cache.cachedFiles > 0) && (
+        <div style={{ ...assetRow, borderTop: `0.5px solid ${theme.border}`, paddingTop: 8 }}>
+          <div style={assetText}>
+            <b style={assetTitle}>{t('已缓存的本地模型')}</b>
+            <span style={assetHint}>
+              {allCaches.filter((entry) => entry.cache.cachedFiles > 0)
+                .map((entry) => `${entry.model}（${formatBytes(entry.cache.cachedBytes)}）`)
+                .join('、')}
+            </span>
+          </div>
+          <button type="button" style={{ ...actionButton, color: '#f77' }}
+            disabled={deleteAllBusy || modelBusy || deleteBusy || downloadBusy}
+            onClick={() => { void removeAllModels(); }}>
+            {deleteAllBusy ? t('删除中…') : t('删除全部本地模型')}
+          </button>
+        </div>
+      )}
+      <span style={footnote}>{t('模型缓存可逐个或全部删除；Transformers.js + ONNX 运行框架随应用打包，不能单独卸载，卸载应用时一并移除。')}</span>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_LOCAL_TRANSCRIPTION_MODEL,
   normalizeLocalTranscriptionDevice,
   normalizeTranscriptionProvider,
   trimApiBaseUrl,
@@ -11,6 +12,7 @@ assert.equal(normalizeTranscriptionProvider(undefined), 'assemblyai');
 assert.equal(normalizeTranscriptionProvider('local'), 'local');
 assert.equal(normalizeTranscriptionProvider('custom'), 'custom');
 assert.equal(normalizeTranscriptionProvider('unknown'), 'assemblyai');
+assert.equal(DEFAULT_LOCAL_TRANSCRIPTION_MODEL, 'onnx-community/whisper-small-chinese-2-ONNX');
 assert.equal(normalizeLocalTranscriptionDevice('webgpu'), 'webgpu');
 assert.equal(normalizeLocalTranscriptionDevice('bad'), 'auto');
 assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:8000/v1');

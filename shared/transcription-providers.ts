@@ -1,4 +1,8 @@
 export const LOCAL_TRANSCRIPTION_MODELS = [
+  // Chinese-specialized Whisper fine-tune with Transformers.js-compatible ONNX
+  // weights. It is a better default for Mandarin punctuation than the generic
+  // tiny model while remaining browser-local and cache-manageable.
+  'onnx-community/whisper-small-chinese-2-ONNX',
   'onnx-community/whisper-tiny',
   'onnx-community/whisper-base',
   'onnx-community/whisper-small',

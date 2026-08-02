@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   TRANSFORMERS_CACHE_NAME,
+  deleteAllLocalModelCaches,
   deleteLocalModelCache,
   downloadLocalModel,
+  inspectAllLocalModelCaches,
   inspectLocalModelCache,
 } from './local-model-cache.ts';
 
@@ -59,6 +61,15 @@ assert.deepEqual(await deleteLocalModelCache('onnx-community/whisper-tiny', stor
   freedBytes: 34,
 });
 assert.equal(entries.has(`${basePrefix}onnx/encoder_model_q4.onnx`), true);
+assert.equal(entries.has('https://example.com/unrelated'), true);
+
+const allCaches = await inspectAllLocalModelCaches(storage);
+assert.equal(allCaches.find((entry) => entry.model === 'onnx-community/whisper-base')?.cache.state, 'partial');
+assert.equal(allCaches.find((entry) => entry.model === 'onnx-community/whisper-small-chinese-2-ONNX')?.cache.state, 'not-downloaded');
+
+const removedAll = await deleteAllLocalModelCaches(storage);
+assert.equal(removedAll.deletedFiles, 1);
+assert.equal(removedAll.freedBytes, 30);
 assert.equal(entries.has('https://example.com/unrelated'), true);
 
 const progress: number[] = [];

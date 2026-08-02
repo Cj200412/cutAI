@@ -11,6 +11,7 @@ export const LOCAL_TRANSCRIPTION_RUNTIME = {
   label: 'Transformers.js + ONNX Runtime Web',
   version: '3.8.1',
   bytes: 22_484_192,
+  removable: false,
 } as const;
 
 export const LOCAL_TRANSCRIPTION_REQUIRED_MODEL_FILES = [

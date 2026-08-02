@@ -334,7 +334,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
             key: 'transcription/local',
             vendor: 'localwhisper',
             title: '本地 Whisper',
-            note: '音频与文字均不离开本机。首次转写会从 Hugging Face 下载所选 ONNX 模型；tiny 最省资源，base 更准，small 对硬件要求最高。',
+            note: '音频与文字均不离开本机。中文优先推荐 whisper-small-chinese-2-ONNX；首次转写会从 Hugging Face 下载所选 ONNX 模型并缓存，可在下方检查、下载或删除任意模型。',
             fields: [
               modelSelect('TRANSCRIPTION_LOCAL_MODEL', '本地模型', DEFAULT_LOCAL_TRANSCRIPTION_MODEL, LOCAL_TRANSCRIPTION_MODELS),
               {
@@ -353,7 +353,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
             key: 'transcription/custom',
             vendor: 'openai',
             title: '自定义兼容服务',
-            note: '适用于 faster-whisper-server、LocalAI 或自建网关。需提供 OpenAI 兼容的 /v1/audio/transcriptions，并返回 verbose_json 词级或分段时间戳。',
+            note: '适用于 faster-whisper-server、LocalAI、FunASR/SenseVoice 网关或自建服务。需提供 OpenAI 兼容的 /v1/audio/transcriptions，并返回 verbose_json 词级或分段时间戳；SenseVoiceSmall 的中文标点通常优于通用 Whisper，但模型由外部服务管理。',
             fields: [
               {
                 name: 'TRANSCRIPTION_CUSTOM_BASE_URL',
