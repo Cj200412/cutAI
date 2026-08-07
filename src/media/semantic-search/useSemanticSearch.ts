@@ -6,6 +6,7 @@ import type { MediaAsset } from '../../editor/types';
 import { isSemanticMedia } from './mediaFrames';
 import { indexSemanticAssets, isAbortError, loadWithFallback } from './semanticOperations';
 import { SemanticClient } from './semanticClient';
+import { loadSemanticRuntimePerformance } from './semanticPerformance';
 import { findDuplicateAssets, rankSemanticMatches } from './vectorSearch';
 import { clearSemanticVectors, pruneSemanticVectors, readSemanticVectors } from './vectorStore';
 import {
@@ -32,7 +33,6 @@ const initialState: SemanticSearchState = {
   matches: [], duplicates: [], error: null,
 };
 
-const preferredDevice = (): SemanticDevice => ('gpu' in navigator ? 'webgpu' : 'wasm');
 type StateSetter = Dispatch<SetStateAction<SemanticSearchState>>;
 
 export function useSemanticSearch(scopeId: string, assets: MediaAsset[]) {
@@ -101,11 +101,19 @@ function useEnableSemantic(
   return useCallback(async () => {
     const controller = new AbortController();
     operation.current = controller;
-    const preferred = preferredDevice();
-    setState((current) => ({ ...current, status: 'loading', device: preferred, modelProgress: 0, error: null }));
-    const load = (device: SemanticDevice, signal: AbortSignal) => loadOnDevice(client, device, signal, setState);
+    setState((current) => ({ ...current, status: 'loading', device: null, modelProgress: 0, error: null }));
     let ready = false;
     try {
+      const performance = await loadSemanticRuntimePerformance();
+      if (controller.signal.aborted) throw new DOMException('Model loading canceled', 'AbortError');
+      const preferred = performance.device;
+      const load = (device: SemanticDevice, signal: AbortSignal) => loadOnDevice(
+        client,
+        device,
+        performance.cpuThreads,
+        signal,
+        setState,
+      );
       await loadWithFallback(client.current, preferred, controller.signal, load);
       await refresh();
       setState((current) => ({ ...current, status: 'ready', modelProgress: 100 }));
@@ -122,12 +130,15 @@ function useEnableSemantic(
 async function loadOnDevice(
   client: MutableRefObject<SemanticClient>,
   device: SemanticDevice,
+  cpuThreads: number,
   signal: AbortSignal,
   setState: StateSetter,
 ) {
   setState((current) => ({ ...current, device }));
-  await client.current.load(device, (progress) => {
+  await client.current.load(device, cpuThreads, (progress) => {
     if (!signal.aborted && progress != null) setState((current) => ({ ...current, modelProgress: progress }));
+  }, (runtimeDevice) => {
+    if (!signal.aborted) setState((current) => ({ ...current, device: runtimeDevice }));
   });
   if (signal.aborted) throw new DOMException('Model loading canceled', 'AbortError');
 }

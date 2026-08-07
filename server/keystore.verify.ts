@@ -84,6 +84,7 @@ const MODEL_ROUTING_NAMES = [
   'R2_ENABLED', // 云同步开关(''=启用/'0'=停用)
   'R2_PRESIGN', // 浏览器预签名直传(''=启用/'0'=仅服务端写穿)
   'MEDIA_DIR',  // 素材保存目录(''=默认 public/media/uploads)
+  'PERFORMANCE_CPU_PERCENT', 'PERFORMANCE_MAX_HEAVY_TASKS', 'PERFORMANCE_GPU_ACCELERATION',
 ] as const;
 for (const name of MODEL_ROUTING_NAMES) {
   assert.ok((KEY_NAMES as readonly string[]).includes(name), `${name} is whitelisted (settable via POST /api/keys)`);

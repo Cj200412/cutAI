@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added / 新增
 
+- Added shared local performance controls for per-task CPU budgets, server background-media concurrency, serialized browser-side model work, and automatic GPU acceleration across supported transcription, analysis, transcoding, and rendering paths.
+  新增统一的本机性能设置，可限制单任务 CPU、控制服务端后台媒体任务并发、串行浏览器侧模型任务，并为支持的转写、分析、转码与渲染路径自动启用可用的显卡加速。
+- Added explicit AI tool-result states and allowlisted media previews, plus selection-accurate proposal previews so failed or unchecked output is no longer shown as completed work.
+  AI 工具结果新增明确的处理中、成功、部分成功、失败与拒绝状态，并只展示可信媒体结果；提案预览也只反映已勾选操作，避免把失败或未选内容误显示为完成。
+- Added automatic dedicated `MG 动画` timeline lanes for generated and library Motion Graphics while preserving explicitly selected target tracks.
+  生成或素材库中的动态图形现在会自动落到名为“MG 动画”的专用时间线轨道，同时保留用户显式指定的目标轨道。
 - Added subtitle-first workspace ingest: matching SRT, VTT, and ASS sidecar files are parsed into timed transcript words before any Whisper transcription is started.
   新增字幕优先导入：同名的 SRT、VTT、ASS 字幕会先解析成带时间的文字稿，不再重复调用 Whisper。
 - Added explicit Agent-provider protocol labels, complete operation-URL support for compatible LLM endpoints, and Local Whisper asset management with click-to-check runtime/model sizes plus per-model cache deletion.
@@ -18,6 +24,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   新增 OpenAI 兼容的自定义生图与 TTS 接口，支持可选鉴权、模型读取和本地免 Key 服务；使用厂商专有协议的生成服务也可自由填写兼容网关模型 ID。
 - Added self-hosted Firecrawl support across web scraping and stock-search fallback, and clarified free-tier or trial options for stock media, local storage, Cloudflare R2, and E2B in Settings.
   网页抓取与在线素材兜底新增 Firecrawl 自托管地址；设置页同时明确标注在线图库、本地存储、Cloudflare R2 与 E2B 的免费额度或试用限制。
+
+### Fixed / 修复
+
+- Fixed Local Whisper silently treating recognized text without timestamps as an empty successful transcript, overlapping missing-timestamp chunks, and ignoring punctuation boundaries inside an adaptive window. Local decoding and inference now share one bounded queue, GPU-off is respected, and automatic WebGPU inference failures retry once on WASM.
+  修复本地 Whisper 把“有文字但无时间戳”静默当作空转写、缺失时间戳片段彼此重叠，以及扩窗时忽略中间标点的问题；本地解码与推理现共用受限队列，关闭显卡会强制使用 WASM，WebGPU 推理失败会自动回退一次。
+- Fixed browser quick export and semantic media search bypassing the saved CPU/GPU policy. Browser rendering now yields according to the CPU threshold, GPU-off exports use the bounded server path, and semantic indexing receives the same WASM thread cap and GPU choice.
+  修复浏览器快导与语义素材搜索绕过 CPU/GPU 设置的问题；浏览器渲染会按阈值让出资源，关闭显卡时改走受限服务端导出，语义索引也使用相同的 WASM 线程上限与显卡选择。
 
 ## [0.1.6] - 2026-07-27
 

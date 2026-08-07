@@ -88,6 +88,10 @@ const commonPrefixLength = (a: string, b: string): number => {
   assert.match(prompt, /字幕保持两行以内/);
   assert.match(prompt, /所有编辑都必须遵守/);
   assert.match(SYSTEM_PROMPT, /创作方向和素材计划/);
+  assert.match(SYSTEM_PROMPT, /先判定交付边界/);
+  assert.match(SYSTEM_PROMPT, /画面覆盖项/);
+  assert.match(SYSTEM_PROMPT, /生成成功绝不等于已经展示/);
+  assert.match(SYSTEM_PROMPT, /view_timeline_frames/);
 }
 
 console.log('systemPromptOrder.verify: ok (易变段收尾/真 editorStatePrompt 不污染前缀/失效点最小化)');

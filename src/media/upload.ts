@@ -330,10 +330,10 @@ export async function importMedia(
   try {
     hooks.onPlaceholder?.(placeholder);
 
-    // Start client ASR extraction from the local file in parallel
-    // with master upload (before master bytes finish). Falls back to server
-    // extract-audio once master lands if the client path fails.
-    const clientAsr = (kind === 'video' || kind === 'audio')
+    // Pure audio can be decoded cheaply while its master uploads. Video uses
+    // the server FFmpeg path after upload: racing captureStream against FFmpeg
+    // left the losing decoder running and doubled CPU/disk work.
+    const clientAsr = kind === 'audio'
       ? extractAsrFromFile(file, kind).catch(() => null)
       : Promise.resolve(null);
 
@@ -343,13 +343,14 @@ export async function importMedia(
       : undefined);
     hooks.onProgress?.(0.92);
 
-    // First successful path wins: client race (started pre-upload) vs server extract.
-    const asrPath = (kind === 'video' || kind === 'audio')
-      ? Promise.any([
-        clientAsr.then((p) => { if (!p) throw new Error('client-asr-miss'); return p; }),
-        extractAudioForAsr(srcRaw).then((p) => { if (!p) throw new Error('server-asr-miss'); return p; }),
-      ]).catch(() => null)
-      : Promise.resolve(null);
+    // Exactly one extractor runs at a time. Audio keeps the upload-time
+    // WebAudio head start and falls back sequentially; video goes straight to
+    // the more reliable server extractor.
+    const asrPath = kind === 'audio'
+      ? clientAsr.then((path) => path || extractAudioForAsr(srcRaw)).catch(() => null)
+      : kind === 'video'
+        ? extractAudioForAsr(srcRaw).catch(() => null)
+        : Promise.resolve(null);
     hooks.onUploaded?.({ assetId: id, src: srcRaw, kind, asrPath });
 
     let src = srcRaw;

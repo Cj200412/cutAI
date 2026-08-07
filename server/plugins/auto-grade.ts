@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
 import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
+import { ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 import {
   analyzeSignalFrames,
   createColorStreamProfile,
@@ -167,6 +168,7 @@ export async function analyzeColorInFile(file: string, options: AnalyzeColorOpti
   // inspect the beginning of long media.
   const sampleFps = autoGradeSampleFps(durationSeconds);
   const args = ['-nostdin', '-hide_banner', '-loglevel', 'error'];
+  args.push(...ffmpegThreadArgs());
   if (startSeconds > 0) args.push('-ss', startSeconds.toFixed(3));
   args.push('-i', file);
   if (!isStill) args.push('-t', durationSeconds.toFixed(3));
@@ -206,7 +208,7 @@ export function autoGradePlugin(): Plugin {
             sendJson(res, 404, { error: 'media file not found' });
             return;
           }
-          const analysis = await analyzeColorInFile(file, body);
+          const analysis = await withHeavyTaskPermit(() => analyzeColorInFile(file, body));
           sendJson(res, 200, { ok: true, src, ...analysis });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

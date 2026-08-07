@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile, uploadDir } from '../media-dir.ts';
 import { ffmpegBin } from '../frame-grid.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 
 const PEAKS_PER_SECOND = 100; // 源 samplesPerPeak = sampleRate/100
 const MAX_PEAK_BINS = 12_000; // 超长素材降密度(远超任何屏幕像素宽,观感无损)
@@ -21,7 +22,9 @@ const MIN_STRIP_FRAMES = 8;
 const MAX_STRIP_FRAMES = 32;
 const SECONDS_PER_STRIP_FRAME = 8;
 const FFMPEG_TIMEOUT_MS = 5 * 60_000;
-const FRAME_CONCURRENCY = 4;
+// A filmstrip is one user-visible task. Serial frame extraction avoids that
+// single task spawning four independent FFmpeg decoders and saturating CPU.
+const FRAME_CONCURRENCY = 1;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
@@ -109,7 +112,9 @@ function computePeaks(file: string, durationMs: number): Promise<number[]> {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegBin(), [
       '-nostdin', '-hide_banner', '-loglevel', 'error',
-      '-i', file, '-vn', '-ac', '1', '-ar', String(PCM_RATE), '-f', 's16le', '-',
+      ...ffmpegThreadArgs(),
+      '-i', file, '-vn', '-ac', '1', '-ar', String(PCM_RATE), '-f', 's16le',
+      ...ffmpegOutputThreadArgs(), '-',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     const peaks: number[] = [];
     let binMax = 0;
@@ -157,18 +162,20 @@ async function buildFilmstrip(file: string, p: Probe, out: string): Promise<void
     for (let i = 0; i < cells.length; i += FRAME_CONCURRENCY) {
       await Promise.all(cells.slice(i, i + FRAME_CONCURRENCY).map((c) => run(ffmpegBin(), [
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+        ...ffmpegThreadArgs(),
         '-ss', String(c.t), '-i', file, '-frames:v', '1',
         // 居中裁切填满格子:竖屏/异形素材也不会被拉扁
         '-vf', `scale=${cellW}:${STRIP_HEIGHT}:force_original_aspect_ratio=increase,crop=${cellW}:${STRIP_HEIGHT}`,
-        '-q:v', '5', c.path,
+        '-q:v', '5', ...ffmpegOutputThreadArgs(), c.path,
       ])));
     }
     const present = cells.filter((c) => existsSync(c.path));
     if (!present.length) throw new Error('no frames extracted');
     await run(ffmpegBin(), [
       '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+      ...ffmpegThreadArgs(),
       '-i', join(work, 'f-%03d.jpg'), '-vf', `tile=${present.length}x1`,
-      '-frames:v', '1', '-q:v', '6', out,
+      '-frames:v', '1', '-q:v', '6', ...ffmpegOutputThreadArgs(), out,
     ]);
   } finally {
     await rm(work, { recursive: true, force: true });
@@ -205,7 +212,7 @@ export function mediaPreviewPlugin(): Plugin {
           if (!hit) return;
           const cache = cacheKey(hit.name, hit.size, 'peaks', 'json');
           if (!existsSync(cache)) {
-            await once(cache, async () => {
+            await once(cache, () => withHeavyTaskPermit(async () => {
               const p = await probe(hit.file);
               if (!p.hasAudio) {
                 await mkdir(previewDir(), { recursive: true });
@@ -217,7 +224,7 @@ export function mediaPreviewPlugin(): Plugin {
               const tmp = `${cache}.tmp`;
               await writeFile(tmp, JSON.stringify({ peaks, peaksPerSecond: PEAKS_PER_SECOND, durationMs: p.durationMs }));
               await rename(tmp, cache); // 原子替换:半截 JSON 不会被读到
-            });
+            }));
           }
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
@@ -236,14 +243,14 @@ export function mediaPreviewPlugin(): Plugin {
           if (!hit) return;
           const cache = cacheKey(hit.name, hit.size, 'strip', 'jpg');
           if (!existsSync(cache)) {
-            await once(cache, async () => {
+            await once(cache, () => withHeavyTaskPermit(async () => {
               const p = await probe(hit.file);
               if (!p.width || !p.height) throw new Error('not a video');
               await mkdir(previewDir(), { recursive: true });
               const tmp = `${cache}.tmp.jpg`;
               await buildFilmstrip(hit.file, p, tmp);
               await rename(tmp, cache);
-            });
+            }));
           }
           res.statusCode = 200;
           res.setHeader('Content-Type', 'image/jpeg');

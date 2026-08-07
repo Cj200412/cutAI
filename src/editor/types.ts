@@ -11,6 +11,8 @@ export type TrackId = string;
 export type TrackKind = 'video' | 'audio' | 'caption';
 export type TrackRole = 'anchor' | 'follower';
 export const TRACK_ORDER: TrackId[] = ['V2', 'V1', 'A1', 'A2'];
+/** Motion Graphics remain visual/video lanes; this is their canonical display name. */
+export const MOTION_GRAPHIC_TRACK_NAME = 'MG 动画';
 
 /** An imported media file in the project's media pool. */
 export type MediaAssetKind = 'video' | 'image' | 'audio' | 'motion-graphic' | 'gif' | 'svg';
@@ -622,6 +624,48 @@ export function defaultTrackId(s: TimelineState, kind: TrackKind): TrackId | nul
   const alias = kind === 'video' ? 'V1' : kind === 'caption' ? 'C1' : 'A1';
   return resolveTrackId(s, alias, kind)
     ?? timelineTrackIds(s).find((id) => trackKind(s, id) === kind)
+    ?? null;
+}
+
+/** A visual lane whose clips are all Motion Graphics. */
+export function isPureMotionGraphicTrack(s: TimelineState, id: TrackId): boolean {
+  if (trackKind(s, id) !== 'video') return false;
+  const items = s.items.filter((item) => item.track === id);
+  return items.length > 0 && items.every((item) => item.kind === 'motion-graphic');
+}
+
+/** Semantic MG lanes are never automatic targets for ordinary visual media. */
+export function isMotionGraphicTrack(s: TimelineState, id: TrackId): boolean {
+  return s.tracks?.[id]?.name === MOTION_GRAPHIC_TRACK_NAME
+    || isPureMotionGraphicTrack(s, id);
+}
+
+/** Bottom-most unlocked main-media lane, excluding semantic/legacy MG lanes. */
+export function defaultMediaTrackId(s: TimelineState, kind: TrackKind): TrackId | null {
+  if (kind !== 'video') {
+    const fallback = defaultTrackId(s, kind);
+    return fallback && !s.tracks?.[fallback]?.locked ? fallback : null;
+  }
+  return timelineTrackIds(s).filter((id) =>
+    trackKind(s, id) === 'video'
+    && !s.tracks?.[id]?.locked
+    && !isMotionGraphicTrack(s, id),
+  ).at(-1) ?? null;
+}
+
+/**
+ * Best automatic lane for a Motion Graphic. A named lane wins, then a legacy
+ * unnamed pure-MG lane, then an unnamed empty visual lane. User-named lanes are
+ * never repurposed or renamed. Explicit placement is resolved by the caller.
+ */
+export function motionGraphicTrackCandidate(s: TimelineState): TrackId | null {
+  const visualTracks = timelineTrackIds(s).filter((id) =>
+    trackKind(s, id) === 'video' && !s.tracks?.[id]?.locked,
+  );
+  return visualTracks.find((id) => s.tracks?.[id]?.name === MOTION_GRAPHIC_TRACK_NAME)
+    ?? visualTracks.find((id) => !s.tracks?.[id]?.name?.trim() && isPureMotionGraphicTrack(s, id))
+    ?? visualTracks.find((id) => !s.tracks?.[id]?.name?.trim()
+      && !s.items.some((item) => item.track === id))
     ?? null;
 }
 

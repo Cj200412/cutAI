@@ -312,15 +312,21 @@ function validateMgAdd(ctx: AgentContext, entry: Record<string, unknown>): OpRes
 
 function planMg(ctx: AgentContext, tpl: { id: string; name: string }, entry: Record<string, unknown>): OpResult {
   const s = ctx.getState();
-  const track = resolveTrackId(s, entry.track ?? entry.trackId ?? 'V1', 'video') ?? defaultTrackId(s, 'video');
-  if (!track) return { error: 'no video track; create one with edit_track first' };
+  const requestedTrack = entry.track ?? entry.trackId;
+  const track = requestedTrack === undefined ? undefined : resolveTrackId(s, requestedTrack, 'video');
+  if (requestedTrack !== undefined && !track) {
+    return { error: `video track "${String(requestedTrack)}" not found; call edit_track action=list` };
+  }
+  if (track && s.tracks?.[track]?.locked) {
+    return { error: `video track "${String(requestedTrack)}" is locked` };
+  }
   return {
     ok: true,
     kind: 'motion-graphic',
     plan: 'addMg',
     templateId: tpl.id,
     name: tpl.name,
-    track,
+    ...(track ? { track } : {}),
     startFrame: typeof entry.startFrame === 'number' ? entry.startFrame : undefined,
   };
 }
@@ -536,12 +542,12 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
     case 'addMg': {
       const tpl = ctx.templates.find((t) => t.id === plan.templateId);
       if (!tpl) return { error: `template vanished: ${plan.templateId}` };
-      ctx.commands.addMotionGraphic(tpl, {
+      const track = ctx.commands.addMotionGraphic(tpl, {
         track: plan.track as string | undefined,
         startFrame: plan.startFrame as number | undefined,
         ripple,
       });
-      return { ok: true, kind: 'motion-graphic', templateId: tpl.id, name: tpl.name, track: plan.track, ripple };
+      return { ok: true, kind: 'motion-graphic', templateId: tpl.id, name: tpl.name, track, ripple };
     }
     case 'addMedia': {
       // Place a pool asset (video/image/gif/svg/audio/motion-graphic) as a clip.
@@ -552,7 +558,11 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
       const placed = typeof plan.durationInFrames === 'number'
         ? { ...asset, durationInFrames: Number(plan.durationInFrames) }
         : asset;
-      const itemId = ctx.commands.addMediaItem(placed, { track: plan.track as string, startFrame: plan.startFrame as number | undefined });
+      const itemId = ctx.commands.addMediaItem(placed, {
+        track: typeof plan.track === 'string' ? plan.track : undefined,
+        startFrame: plan.startFrame as number | undefined,
+      });
+      const placedItem = ctx.getState().items.find((item) => item.id === itemId);
       return {
         ok: true,
         kind: plan.kind,
@@ -561,7 +571,7 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
           itemId,
           name: asset.name,
           kind: asset.kind,
-          track: plan.track,
+          track: placedItem?.track ?? plan.track,
           startFrame: plan.startFrame ?? 'appended',
           durationInFrames: placed.durationInFrames,
         },

@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Proposal } from '../../agent/proposal';
 import { useT } from '../../i18n/locale';
 import { Icon } from '../icons';
 import { highCostOps } from '../../agent/skills/skillGuard';
 
-export function ProposalCard({ proposal, onApply, onReject, onPreview, stale, onForceApply, onRePropose }: {
+export function ProposalCard({ proposal, onApply, onReject, onPreview, preview, stale, onForceApply, onRePropose }: {
   proposal: Proposal;
   onApply: (selected: Set<number>) => void;
   onReject: () => void;
-  onPreview: (on: boolean) => void;
+  onPreview: (selected: ReadonlySet<number> | null) => void;
+  /** Parent-owned so internal/external cards cannot both claim preview. */
+  preview: boolean;
   /** 提案过期(staleness):真时footer换 仍然应用/重新提案/取消 三选 */
   stale?: boolean;
   onForceApply?: (selected: Set<number>) => void;
@@ -17,25 +19,41 @@ export function ProposalCard({ proposal, onApply, onReject, onPreview, stale, on
   const t = useT();
   const ops = proposal.options[0].operations;
   const [selected, setSelected] = useState<Set<number>>(() => new Set(ops.map((_, i) => i)));
-  const [preview, setPreview] = useState(false);
   const costly = highCostOps(proposal);
+  const previewRef = useRef(preview);
+  const onPreviewRef = useRef(onPreview);
+  previewRef.current = preview;
+  onPreviewRef.current = onPreview;
 
-  const toggle = (i: number) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(i)) n.delete(i);
-      else n.add(i);
-      return n;
-    });
-  const selectAll = () => setSelected(new Set(ops.map((_, i) => i)));
-  const selectNone = () => setSelected(new Set());
-  const togglePreview = () => {
-    const on = !preview;
-    setPreview(on);
-    onPreview(on);
+  useEffect(() => {
+    const all = new Set(proposal.options[0].operations.map((_, index) => index));
+    setSelected(all);
+    if (previewRef.current) onPreviewRef.current(all);
+    // Proposal identity is the reset boundary. Refs keep the latest parent
+    // preview state without retriggering this reset for an inline callback.
+  }, [proposal]);
+
+  useEffect(() => {
+    if (stale && preview) onPreview(null);
+  }, [onPreview, preview, stale]);
+
+  const updateSelected = (next: Set<number>) => {
+    setSelected(next);
+    if (preview) onPreview(next);
   };
-  const apply = () => { onPreview(false); onApply(selected); };
-  const reject = () => { onPreview(false); onReject(); };
+  const toggle = (i: number) => {
+    const next = new Set(selected);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    updateSelected(next);
+  };
+  const selectAll = () => updateSelected(new Set(ops.map((_, i) => i)));
+  const selectNone = () => updateSelected(new Set());
+  const togglePreview = () => {
+    onPreview(preview ? null : selected);
+  };
+  const apply = () => { onPreview(null); onApply(selected); };
+  const reject = () => { onPreview(null); onReject(); };
 
   const allOn = selected.size === ops.length;
   const noneOn = selected.size === 0;
@@ -123,6 +141,7 @@ export function ProposalCard({ proposal, onApply, onReject, onPreview, stale, on
           type="button"
           className={`cc-proposal-preview${preview ? ' on' : ''}`}
           onClick={togglePreview}
+          disabled={stale}
           title={t('在预览窗查看提案结果（不改正式时间线）')}
         >
           <span className="cc-proposal-preview-dot" />
@@ -133,10 +152,10 @@ export function ProposalCard({ proposal, onApply, onReject, onPreview, stale, on
           {stale ? (
             <>
               {onRePropose && (
-                <button type="button" className="cc-proposal-reject" onClick={() => { onPreview(false); onRePropose(); }}>{t('重新提案')}</button>
+                <button type="button" className="cc-proposal-reject" onClick={() => { onPreview(null); onRePropose(); }}>{t('重新提案')}</button>
               )}
               <button type="button" className="cc-proposal-apply" disabled={noneOn}
-                onClick={() => { onPreview(false); onForceApply?.(selected); }}>
+                onClick={() => { onPreview(null); onForceApply?.(selected); }}>
                 {t('仍然应用')}
               </button>
             </>

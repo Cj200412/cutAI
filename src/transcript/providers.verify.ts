@@ -7,10 +7,12 @@ import {
   trimApiBaseUrl,
 } from '../../shared/transcription-providers.ts';
 import { compatibleTranscriptResult } from './openai-compatible.ts';
+import { acceptWhisperWindow } from './local-whisper-segments.ts';
 import {
   inspectLocalTranscriptionRuntime,
   installLocalTranscriptionRuntime,
   localWhisperResult,
+  resolvePerformanceTranscriptionDevice,
   unloadLocalTranscriptionRuntime,
 } from './local-whisper.ts';
 
@@ -23,7 +25,59 @@ assert.equal(normalizeLocalTranscriptionModel('onnx-community/whisper-small-chin
 assert.equal(normalizeLocalTranscriptionModel('onnx-community/whisper-base'), 'onnx-community/whisper-base');
 assert.equal(normalizeLocalTranscriptionDevice('webgpu'), 'webgpu');
 assert.equal(normalizeLocalTranscriptionDevice('bad'), 'auto');
+assert.equal(resolvePerformanceTranscriptionDevice('auto', 'off'), 'wasm');
+assert.equal(resolvePerformanceTranscriptionDevice('webgpu', 'off'), 'wasm');
+assert.equal(resolvePerformanceTranscriptionDevice('auto', 'auto'), 'auto');
 assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:8000/v1');
+
+assert.throws(
+  () => acceptWhisperWindow({ text: '有内容', chunks: [] }, 5),
+  /缺少分段时间戳/,
+);
+assert.throws(
+  () => acceptWhisperWindow({ text: '有内容', chunks: [{ text: '有内容' }] }, 5),
+  /缺少分段时间戳/,
+);
+assert.deepEqual(acceptWhisperWindow({
+  text: '一句尚未说完',
+  chunks: [{ text: '一句尚未说完', timestamp: [0, null] }],
+}, 5), {
+  text: '', chunks: [], durationSeconds: 5, punctuationBoundary: false,
+}, '开放末段应触发扩窗，而不是误报时间戳缺失');
+assert.deepEqual(acceptWhisperWindow({
+  text: '最后一句',
+  chunks: [{ text: '最后一句', timestamp: [1, null] }],
+}, 5, true), {
+  text: '最后一句',
+  chunks: [{ text: '最后一句', timestamp: [1, 5] }],
+  durationSeconds: 5,
+  punctuationBoundary: false,
+}, '音频末尾或 30 秒上限应安全收束开放末段');
+assert.deepEqual(acceptWhisperWindow({
+  text: '第一句，后半句',
+  chunks: [
+    { text: '第一句，', timestamp: [0, 3] },
+    { text: '后半句', timestamp: [3, 5] },
+  ],
+}, 5), {
+  text: '第一句，',
+  chunks: [{ text: '第一句，', timestamp: [0, 3] }],
+  durationSeconds: 3,
+  punctuationBoundary: true,
+});
+assert.equal(acceptWhisperWindow({
+  text: '他说：你好。”后面',
+  chunks: [{ text: '他说：你好。”后面', timestamp: [0, 5] }],
+}, 5).text, '他说：你好。”', '标点断句应保留紧随其后的闭合引号');
+assert.deepEqual(acceptWhisperWindow({
+  text: '你好。',
+  chunks: [{ text: '你好', timestamp: [0, 2] }],
+}, 5), {
+  text: '你好。',
+  chunks: [{ text: '你好。', timestamp: [0, 2] }],
+  durationSeconds: 2,
+  punctuationBoundary: true,
+});
 
 {
   const result = localWhisperResult({
@@ -45,6 +99,10 @@ assert.equal(trimApiBaseUrl(' http://127.0.0.1:8000/v1/// '), 'http://127.0.0.1:
 assert.deepEqual(localWhisperResult({ text: '', chunks: [] }), {
   text: '', words: [], utterances: [],
 });
+assert.throws(
+  () => localWhisperResult({ text: '有内容但没有时间戳', chunks: [] }),
+  /没有返回分段时间戳/,
+);
 
 assert.equal(inspectLocalTranscriptionRuntime(), 'installed');
 assert.deepEqual(unloadLocalTranscriptionRuntime(), { abortedJobs: 0 });

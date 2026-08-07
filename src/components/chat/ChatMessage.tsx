@@ -6,9 +6,61 @@ import type { DisplayMessage } from '../../agent/useAgent';
 import { parseWidgets } from './widget-parse';
 import { WidgetCard } from './WidgetCard';
 import { Markdown } from './Markdown';
-import { hasToolResultError } from './tool-result';
+import { presentToolResult, type ToolMediaPreview, type ToolResultState } from './tool-result';
 
 const GREEN = theme.success;
+
+const TOOL_STATE_COLOR: Record<ToolResultState, string> = {
+  pending: theme.accent,
+  success: GREEN,
+  partial: theme.gold,
+  failed: theme.danger,
+  denied: theme.gold,
+};
+
+const TOOL_STATE_LABEL: Record<ToolResultState, string> = {
+  pending: '处理中',
+  success: '已完成',
+  partial: '部分完成',
+  failed: '失败',
+  denied: '已拒绝',
+};
+
+function ToolMediaResults({ items }: { items: ToolMediaPreview[] }) {
+  const t = useT();
+  if (!items.length) return null;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: items.length > 1 ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)', gap: 6, marginTop: 7, maxWidth: 360 }}>
+      {items.map((item) => (
+        <div key={item.key} style={{ minWidth: 0, overflow: 'hidden', border: `0.5px solid ${theme.border}`, borderRadius: 6, background: theme.panelAlt }}>
+          {item.kind === 'image' && item.src ? (
+            <img src={item.src} alt={item.name ?? 'Generated image'} loading="lazy"
+              style={{ display: 'block', width: '100%', maxHeight: 220, objectFit: 'contain', background: '#000' }} />
+          ) : item.kind === 'video' && item.src ? (
+            <video src={item.src} controls preload="metadata"
+              style={{ display: 'block', width: '100%', maxHeight: 220, background: '#000' }} />
+          ) : item.kind === 'audio' && item.src ? (
+            <div style={{ display: 'grid', gap: 7, padding: 9 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: theme.text }}><Icon name="music" size={15} />{item.name ?? 'Generated audio'}</span>
+              <audio src={item.src} controls preload="metadata" style={{ width: '100%', height: 30 }} />
+            </div>
+          ) : (
+            <div style={{ minHeight: 72, display: 'grid', placeItems: 'center', alignContent: 'center', gap: 5, padding: 10, color: theme.text }}>
+              <Icon name="sparkles" size={24} />
+              <span>{item.name ?? t('MG 动画')}</span>
+              <small style={{ color: theme.textDim }}>{t('已生成到素材池')}</small>
+            </div>
+          )}
+          {item.kind !== 'audio' && item.name && (
+            <div title={item.name} style={{ padding: '5px 7px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: theme.text, fontSize: 11.5 }}>
+              {item.name}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ThinkingElapsed({ active, elapsedMs = 0, startedAt }: { active: boolean; elapsedMs?: number; startedAt?: number }) {
   const [fallbackStartedAt] = useState(() => Date.now());
@@ -92,11 +144,8 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
   if (msg.role === 'tool') {
     const tool = msg.tool!;
     const r = tool.result;
-    const hasError = hasToolResultError(r);
-    const error = hasError
-      ? r.error
-      : undefined;
-    const ok = !hasError;
+    const presentation = presentToolResult(tool.name, r);
+    const statusColor = TOOL_STATE_COLOR[presentation.state];
     // 关键参数摘要:同名工具的多次调用(search_templates×7、normalize_loudness×8…)
     // 之前只印工具名，看着像重复；补上区分性参数(query/itemId/category…)一眼可辨。
     const summary = toolArgSummary(tool.args);
@@ -106,19 +155,21 @@ export function ChatMessage({ msg, streaming, onWidgetSubmit, onContinue }: Chat
     return (
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9, margin: '9px 0', color: theme.textDim, fontSize: 12.5 }}
         title={typeof tool.args === 'object' ? JSON.stringify(tool.args) : String(tool.args)}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: ok ? GREEN : theme.danger, flexShrink: 0, marginTop: 5 }} />
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, flexShrink: 0, marginTop: 5 }} />
         {/* 工具名 + 摘要 + 错误同处一个可换行块:minWidth:0 让它能在 flex 父内收缩，
             overflowWrap:anywhere 断长 token —— 长错误/摘要在面板内 wrap，不再单行溢出被裁。 */}
-        <span style={{ minWidth: 0, overflowWrap: 'anywhere', lineHeight: 1.45 }}>
+        <div style={{ minWidth: 0, overflowWrap: 'anywhere', lineHeight: 1.45 }}>
           <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: 0.2 }}>{tool.name}</span>
           {summary && <span style={{ opacity: 0.8 }}> · {summary}</span>}
-          {!ok && <span style={{ color: theme.danger }}>：{String(error)}</span>}
+          {presentation.state !== 'success' && <span style={{ color: statusColor }}> · {t(TOOL_STATE_LABEL[presentation.state])}</span>}
+          {presentation.message && <span style={{ display: 'block', color: presentation.state === 'failed' ? theme.danger : statusColor }}>{presentation.message}</span>}
+          <ToolMediaResults items={presentation.media} />
           <button type="button" onClick={() => setToolOpen((value) => !value)}
             style={{ display: 'block', marginTop: 3, padding: 0, border: 0, background: 'none', color: theme.accent, cursor: 'pointer', fontSize: 11 }}>
             {toolOpen ? t('收起工具详情') : t('预览工具详情')}
           </button>
           {toolOpen && <pre style={{ margin: '5px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: '6px 8px', borderRadius: 4, background: theme.panelAlt, color: theme.textDim, fontSize: 10.5, lineHeight: 1.45 }}>{previewText.slice(0, 12000)}{previewText.length > 12000 ? '\n…' : ''}</pre>}
-        </span>
+        </div>
       </div>
     );
   }

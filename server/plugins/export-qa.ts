@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
 import { formatTimeLabel, tileContactSheet } from '../frame-grid.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 import {
   assessExportQuality,
   parseExportQaLog,
@@ -131,7 +132,7 @@ async function probeMedia(file: string): Promise<Pick<
 
 async function analyzeVideo(file: string): Promise<string> {
   const { stderr } = await runProcess(ffmpegBin(), [
-    '-nostdin', '-hide_banner', '-i', file,
+    '-nostdin', '-hide_banner', ...ffmpegThreadArgs(), '-i', file,
     '-map', '0:v:0', '-vf', 'blackdetect=d=0.12:pic_th=0.98:pix_th=0.10,freezedetect=n=-50dB:d=0.5',
     '-an', '-f', 'null', '-',
   ]);
@@ -140,7 +141,7 @@ async function analyzeVideo(file: string): Promise<string> {
 
 async function analyzeAudio(file: string): Promise<string> {
   const { stderr } = await runProcess(ffmpegBin(), [
-    '-nostdin', '-hide_banner', '-i', file,
+    '-nostdin', '-hide_banner', ...ffmpegThreadArgs(), '-i', file,
     '-map', '0:a:0', '-af', 'silencedetect=n=-48dB:d=2,volumedetect',
     '-vn', '-f', 'null', '-',
   ]);
@@ -150,8 +151,9 @@ async function analyzeAudio(file: string): Promise<string> {
 async function extractFrame(file: string, seconds: number, output: string): Promise<void> {
   await runProcess(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+    ...ffmpegThreadArgs(),
     '-ss', String(Math.max(0, seconds)), '-i', file,
-    '-frames:v', '1', '-q:v', '4', output,
+    '-frames:v', '1', '-q:v', '4', ...ffmpegOutputThreadArgs(), output,
   ]);
 }
 
@@ -205,10 +207,10 @@ export interface AnalyzeExportFileOptions extends ExportQaExpectations {
 /** Analyze one completed export and return both structured findings and cut evidence. */
 export async function analyzeExportFile(file: string, options: AnalyzeExportFileOptions) {
   const probe = await probeMedia(file);
-  const [videoLog, audioLog] = await Promise.all([
-    probe.hasVideo ? analyzeVideo(file) : Promise.resolve(''),
-    probe.hasAudio ? analyzeAudio(file) : Promise.resolve(''),
-  ]);
+  // Do not fully decode the same export twice in parallel. Sequential analysis
+  // stays within the configured CPU threshold and avoids a post-export spike.
+  const videoLog = probe.hasVideo ? await analyzeVideo(file) : '';
+  const audioLog = probe.hasAudio ? await analyzeAudio(file) : '';
   const parsed = parseExportQaLog(`${videoLog}\n${audioLog}`);
   const report = assessExportQuality({ ...probe, ...parsed }, options);
   const evidence = probe.hasVideo
@@ -254,7 +256,9 @@ export function exportQaPlugin(): Plugin {
               : [],
             maxEvidenceCuts: Math.max(1, Math.min(MAX_EVIDENCE_CUTS, Math.round(Number(body.maxEvidenceCuts) || MAX_EVIDENCE_CUTS))),
           };
-          const { report, evidence } = await analyzeExportFile(file, expected);
+          const { report, evidence } = await withHeavyTaskPermit(
+            () => analyzeExportFile(file, expected),
+          );
           sendJson(res, 200, {
             ok: true,
             src: body.src,

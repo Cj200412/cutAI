@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { AutoProcessor, AutoTokenizer, ChineseCLIPModel, RawImage } from '@huggingface/transformers';
+import { AutoProcessor, AutoTokenizer, ChineseCLIPModel, env, RawImage } from '@huggingface/transformers';
 import { normalizeVector } from './vectorSearch';
 import { MAX_SEMANTIC_QUERY_LENGTH, SEMANTIC_MODEL_ID, type WorkerRequest, type WorkerResponse } from './types';
 
@@ -18,6 +18,7 @@ let dummyTextInputs: ModelInputs | null = null;
 let dummyImageInputs: ModelInputs | null = null;
 let loading: Promise<void> | null = null;
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
+let runQueue: Promise<void> = Promise.resolve();
 
 const post = (message: WorkerResponse) => workerScope.postMessage(message);
 
@@ -34,6 +35,10 @@ async function loadModel(request: Extract<WorkerRequest, { type: 'load' }>): Pro
   if (model && processor && tokenizer) return;
   if (loading) return loading;
   const progress = (value: unknown) => post({ id: request.id, type: 'progress', ...progressInfo(value) });
+  if (request.device === 'wasm') {
+    const wasm = env.backends.onnx.wasm;
+    if (wasm) Object.assign(wasm, { numThreads: Math.max(1, Math.min(4, Math.round(request.cpuThreads) || 1)) });
+  }
   loading = Promise.all([
     AutoTokenizer.from_pretrained(SEMANTIC_MODEL_ID, { progress_callback: progress }),
     AutoProcessor.from_pretrained(SEMANTIC_MODEL_ID, { progress_callback: progress }),
@@ -85,7 +90,8 @@ function validateRequest(value: unknown): WorkerRequest {
   if (!value || typeof value !== 'object') throw new Error('Invalid semantic worker request');
   const request = value as Record<string, unknown>;
   if (!Number.isInteger(request.id)) throw new Error('Invalid semantic worker request id');
-  if (request.type === 'load' && (request.device === 'webgpu' || request.device === 'wasm')) return request as WorkerRequest;
+  if (request.type === 'load' && (request.device === 'webgpu' || request.device === 'wasm')
+    && Number.isInteger(request.cpuThreads) && Number(request.cpuThreads) > 0) return request as WorkerRequest;
   if (request.type === 'embed-text' && typeof request.text === 'string'
     && request.text.length > 0 && request.text.length <= MAX_SEMANTIC_QUERY_LENGTH) return request as WorkerRequest;
   if (request.type === 'embed-image' && isValidFrame(request.frame)) return request as WorkerRequest;
@@ -113,7 +119,7 @@ async function handleRequest(value: unknown): Promise<void> {
 }
 
 workerScope.onmessage = (event: MessageEvent<unknown>) => {
-  void handleRequest(event.data).catch((reason: unknown) => {
+  runQueue = runQueue.then(() => handleRequest(event.data)).catch((reason: unknown) => {
     const message = reason instanceof Error ? reason.message : String(reason);
     const id = event.data && typeof event.data === 'object' && Number.isInteger((event.data as { id?: unknown }).id)
       ? Number((event.data as { id: number }).id)

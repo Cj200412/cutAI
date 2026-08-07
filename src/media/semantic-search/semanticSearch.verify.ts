@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { SEMANTIC_MODEL_VERSION } from './types';
+import { resolveSemanticRuntimePerformance } from './semanticPerformance';
+import { SemanticClient } from './semanticClient';
+import type { WorkerRequest, WorkerResponse } from './types';
 import { findDuplicateAssets, rankSemanticMatches } from './vectorSearch';
 import { shouldPruneVector } from './vectorStore';
 
@@ -44,3 +47,58 @@ const validIds = new Set(['kept']);
 assert.equal(shouldPruneVector({ scopeId: 'other', modelVersion: 'old', assetId: 'gone' }, 'project-a', validIds), false);
 assert.equal(shouldPruneVector({ scopeId: 'project-a', modelVersion: 'old', assetId: 'kept' }, 'project-a', validIds), true);
 assert.equal(shouldPruneVector({ scopeId: 'project-a', modelVersion: SEMANTIC_MODEL_VERSION, assetId: 'gone' }, 'project-a', validIds), true);
+
+assert.deepEqual(resolveSemanticRuntimePerformance({ cpuPercent: 50, gpuMode: 'off' }, 12, true), {
+  device: 'wasm',
+  cpuThreads: 4,
+});
+assert.deepEqual(resolveSemanticRuntimePerformance({ cpuPercent: 35, gpuMode: 'auto' }, 8, true), {
+  device: 'webgpu',
+  cpuThreads: 2,
+});
+assert.equal(resolveSemanticRuntimePerformance({ gpuMode: 'auto' }, 8, false).device, 'wasm');
+
+// A WebGPU model may load but fail on its first real operator. The client must
+// rebuild on bounded WASM and retry exactly once instead of surfacing an error.
+const originalWorker = globalThis.Worker;
+class SemanticFallbackWorker {
+  static embedAttempts = 0;
+  onmessage: ((event: MessageEvent<WorkerResponse>) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  private device: 'webgpu' | 'wasm' = 'webgpu';
+
+  postMessage(request: WorkerRequest): void {
+    queueMicrotask(() => {
+      if (request.type === 'load') {
+        this.device = request.device;
+        this.emit({ id: request.id, type: 'result' });
+        return;
+      }
+      SemanticFallbackWorker.embedAttempts += 1;
+      if (this.device === 'webgpu') {
+        this.emit({ id: request.id, type: 'error', message: 'unsupported WebGPU operator' });
+      } else {
+        this.emit({ id: request.id, type: 'result', vector: [0.25, 0.75] });
+      }
+    });
+  }
+
+  terminate(): void {}
+
+  private emit(response: WorkerResponse): void {
+    this.onmessage?.({ data: response } as MessageEvent<WorkerResponse>);
+  }
+}
+
+try {
+  Object.defineProperty(globalThis, 'Worker', { configurable: true, writable: true, value: SemanticFallbackWorker });
+  const devices: string[] = [];
+  const client = new SemanticClient();
+  await client.load('webgpu', 2, undefined, (device) => devices.push(device));
+  assert.deepEqual(await client.embedText('城市夜景'), [0.25, 0.75]);
+  assert.deepEqual(devices, ['webgpu', 'wasm']);
+  assert.equal(SemanticFallbackWorker.embedAttempts, 2);
+  client.cancel();
+} finally {
+  Object.defineProperty(globalThis, 'Worker', { configurable: true, writable: true, value: originalWorker });
+}

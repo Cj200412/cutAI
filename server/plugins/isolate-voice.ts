@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { rename, stat, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile, uploadDir } from '../media-dir.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 
 const MAX_JSON = 8 * 1024;
 const FFMPEG_TIMEOUT_MS = 30 * 60_000;
@@ -119,11 +120,13 @@ async function isolateToFile(
       await runFfmpeg(
         [
           '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+          ...ffmpegThreadArgs(),
           '-i', inputPath,
           '-vn',
           '-map', '0:a:0?',
           '-af', af,
           '-c:a', 'aac', '-b:a', '128k',
+          ...ffmpegOutputThreadArgs(),
           partPath,
         ],
         FFMPEG_TIMEOUT_MS,
@@ -191,7 +194,9 @@ export function isolateVoicePlugin(): Plugin {
             } catch { /* re-run */ }
           }
 
-          const bytes = await isolateToFile(inputPath, finalPath, strength);
+          const bytes = await withHeavyTaskPermit(
+            () => isolateToFile(inputPath, finalPath, strength),
+          );
           if (bytes <= 0) {
             sendJson(res, 422, { error: 'isolated audio is empty (source may have no audio track)' });
             return;

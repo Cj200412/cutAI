@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 import {
   DEFAULT_MAX_SCENES,
   DEFAULT_MIN_SCENE_MS,
@@ -210,7 +211,7 @@ export async function detectScenesInFile(
   let progressBuffer = '';
   let lastProcessedMs = 0;
   const output = await runCapture(ffmpegBin(), [
-    '-nostdin', '-hide_banner', '-loglevel', 'error', '-i', file,
+    '-nostdin', '-hide_banner', '-loglevel', 'error', ...ffmpegThreadArgs(), '-i', file,
     '-filter_complex', filter,
     '-map', '[hits]', '-an', '-f', 'null', '-',
     '-map', '[analysis_clock]', '-an',
@@ -293,17 +294,17 @@ function cleanJobs(): void {
 
 async function runJob(job: InternalJob): Promise<void> {
   try {
-    const detected = await detectScenesInFile(job.file, {
-      ...job.options,
-      signal: job.controller.signal,
-      onProgress(update) {
-        if (job.status === 'cancelled') return;
-        job.status = update.phase;
-        job.progress = update.progress;
-        job.processedMs = update.processedMs;
-        job.updatedAt = Date.now();
-      },
-    });
+    const detected = await withHeavyTaskPermit(() => detectScenesInFile(job.file, {
+        ...job.options,
+        signal: job.controller.signal,
+        onProgress(update) {
+          if (job.status === 'cancelled') return;
+          job.status = update.phase;
+          job.progress = update.progress;
+          job.processedMs = update.processedMs;
+          job.updatedAt = Date.now();
+        },
+      }));
     if (job.controller.signal.aborted) throw abortError();
     const result: SceneDetectionResult = {
       ...detected,
@@ -340,12 +341,14 @@ async function evidenceFrame(file: string, fileSize: number, timeMs: number): Pr
   const key = `${file}:${fileSize}:${Math.round(timeMs)}`;
   const cached = frameCache.get(key);
   if (cached) return cached;
-  const pending = runBuffer(ffmpegBin(), [
+  const pending = withHeavyTaskPermit(() => runBuffer(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error',
+    ...ffmpegThreadArgs(),
     '-ss', String(Math.max(0, timeMs) / 1000), '-i', file,
     '-frames:v', '1', '-vf', 'scale=320:-2:flags=fast_bilinear',
-    '-c:v', 'mjpeg', '-q:v', '5', '-f', 'image2pipe', 'pipe:1',
-  ], 30_000).then((buffer) => {
+    '-c:v', 'mjpeg', '-q:v', '5', '-f', 'image2pipe',
+    ...ffmpegOutputThreadArgs(), 'pipe:1',
+  ], 30_000)).then((buffer) => {
     if (!buffer.length) throw new Error('no frame extracted');
     return buffer;
   }).catch((error) => {
@@ -437,7 +440,7 @@ export function sceneDetectionPlugin(): Plugin {
           const media = mediaFromSrc(String(body.src ?? ''));
           if ('error' in media) { sendJson(res, media.status, { error: media.error }); return; }
           const fileSize = (await stat(media.file)).size;
-          const result = await detectScenesInFile(media.file, body);
+          const result = await withHeavyTaskPermit(() => detectScenesInFile(media.file, body));
           sendJson(res, 200, {
             ok: true,
             src: media.src,

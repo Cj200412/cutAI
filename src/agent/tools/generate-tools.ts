@@ -51,6 +51,13 @@ export const GENERATE_WORKFLOW = `
 - Use track_progress only with target=generation for submit_music/submit_video job IDs. action=params reads submitted settings, status is non-blocking, wait is explicitly bounded by timeoutSeconds, and resume retries a failed result download without regenerating.
 - Do not claim a generated asset exists until track_progress reports succeeded and addedAssets includes it. Retrying track_progress is idempotent and never duplicates an existing asset.
 
+## Generation placement and visual coverage
+- First classify the requested deliverable: "generate a media asset" ends in the media pool, while "make the video / add it to the edit" also requires a deliberate timeline placement. Never confuse the two.
+- Before a creative edit, make a short visual-coverage list from the user's request and transcript: include every explicitly requested visual and each fact that must be shown; exclude unrequested decorative filler, duplicates, and off-topic visuals.
+- For synchronous image/voice/sound generation, a successful submit result proves only the returned media-pool asset exists. For asynchronous video/music generation, only track_progress status=succeeded with that asset in addedAssets proves it exists. Check addedTo before placement: submit_image with addedTo=media-pool-and-proposed-timeline has already placed its generated assets, so never add them again; otherwise place the exact returned asset ID with edit_item when placement was requested.
+- Verify placed visual media (image/video/MG) with one final read_project for item/track/timing plus view_timeline_frames at representative frames. Verify placed audio (TTS/music/SFX) with read_project for the exact audio item, track, time range, mute/volume state, and returned duration/readiness metadata; timeline frames do not prove audio playback.
+- Report only the state verified by those tool results. Do not say an asset is on screen or audible when it is only in the media pool.
+
 ## Export
 - Use submit_export with format=video for MP4/WebM, format=audio for MP3/WAV, format=subtitles for SRT/TXT, or format=xml for FCPXML (nleFormat fcp_xml|fcp_xml_resolve). codec defaults to h264 for video and mp3 for audio; subtitleFormat defaults to srt.
 - To hand off rendered motion graphics with XML, call export_motion_graphic_prores with filenameMode=xml, then pass the successful renders[].renderKey values to submit_export.motionGraphicRenderKeys. Missing or failed keys remain explicit XML placeholders.

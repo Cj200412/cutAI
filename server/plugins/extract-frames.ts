@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile } from '../media-dir.ts';
 import { formatTimeLabel, tileContactSheet } from '../frame-grid.ts';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
+import { acquireHeavyTaskPermit, ffmpegOutputThreadArgs, ffmpegThreadArgs } from '../performance-budget.ts';
 
 const MAX_JSON = 32 * 1024;
 const MAX_SAMPLES = 20;
@@ -121,6 +122,7 @@ function sceneChangeTimesMs(input: string, fromMs: number, toMs: number): Promis
     const times: number[] = [];
     const child = spawn(ffmpegBin(), [
       '-nostdin', '-hide_banner',
+      ...ffmpegThreadArgs(),
       '-ss', String(Math.max(0, fromMs) / 1000),
       '-t', String(Math.max(0, toMs - fromMs) / 1000),
       '-i', input,
@@ -186,10 +188,12 @@ export function frameSeekArgs(timeMs: number): string[] {
 async function extractOneFrame(input: string, timeMs: number, outPath: string): Promise<void> {
   await run(ffmpegBin(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+    ...ffmpegThreadArgs(),
     ...frameSeekArgs(timeMs),
     '-i', input,
     '-frames:v', '1',
     '-q:v', '4',
+    ...ffmpegOutputThreadArgs(),
     outPath,
   ], FFMPEG_TIMEOUT_MS);
 }
@@ -204,6 +208,7 @@ export function extractFramesPlugin(): Plugin {
           return;
         }
         const work = await mkdtemp(join(tmpdir(), 'cc-frames-'));
+        let releaseHeavy: (() => void) | null = null;
         try {
           const body = (await readJson(req)) as {
             src?: string;
@@ -224,6 +229,7 @@ export function extractFramesPlugin(): Plugin {
             sendJson(res, 404, { error: `media not found: ${name}` });
             return;
           }
+          releaseHeavy = await acquireHeavyTaskPermit();
 
           let times: number[];
           if (Array.isArray(body.sourceTimesMs) && body.sourceTimesMs.length) {
@@ -294,6 +300,7 @@ export function extractFramesPlugin(): Plugin {
           const status = /ENOENT|spawn ffmpeg|spawn ffprobe/i.test(message) ? 503 : 500;
           sendJson(res, status, { error: message });
         } finally {
+          releaseHeavy?.();
           await rm(work, { recursive: true, force: true }).catch(() => {});
         }
       });

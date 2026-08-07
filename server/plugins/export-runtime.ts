@@ -9,6 +9,7 @@ import {
   resolveH264Encoder,
 } from '../media-acceleration.ts';
 import { TaskLimiter, type ReleaseTaskPermit } from '../task-limiter.ts';
+import { acquireHeavyTaskPermit, ffmpegOutputThreadArgs, ffmpegThreadArgs } from '../performance-budget.ts';
 
 const DEFAULT_MAX_ACTIVE_EXPORTS = 1;
 const MAX_ACTIVE_EXPORTS = 4;
@@ -96,12 +97,33 @@ export function resolveMaxActiveExports(value = process.env.OPENCHATCUT_MAX_ACTI
 
 const exportLimiter = new TaskLimiter(resolveMaxActiveExports());
 
-export function acquireExportPermit(): Promise<ReleaseTaskPermit> {
-  return exportLimiter.acquire();
+export async function acquireExportPermit(): Promise<ReleaseTaskPermit> {
+  // Queue in the export lane first. A backlog of exports must not occupy every
+  // global heavy-task slot while merely waiting for its export turn, otherwise
+  // transcription/preview/normalization work can be starved.
+  const releaseExport = await exportLimiter.acquire();
+  try {
+    const releaseHeavy = await acquireHeavyTaskPermit();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseExport();
+      releaseHeavy();
+    };
+  } catch (error) {
+    releaseExport();
+    throw error;
+  }
 }
 
-export function withExportPermit<T>(task: () => Promise<T>): Promise<T> {
-  return exportLimiter.run(task);
+export async function withExportPermit<T>(task: () => Promise<T>): Promise<T> {
+  const release = await acquireExportPermit();
+  try {
+    return await task();
+  } finally {
+    release();
+  }
 }
 
 function runFfmpeg(args: string[]): Promise<void> {
@@ -140,10 +162,14 @@ export async function retimeFps(
   targetBitrate: number,
 ): Promise<void> {
   await unlink(output).catch(() => {});
-  const base = ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vf', `fps=${targetFps}`];
+  const base = [
+    '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+    ...ffmpegThreadArgs(),
+    '-i', input, '-vf', `fps=${targetFps}`,
+  ];
   try {
     if (codec === 'vp8') {
-      await runFfmpeg([...base, '-c:v', 'libvpx', '-b:v', '4M', '-c:a', 'copy', output]);
+      await runFfmpeg([...base, '-c:v', 'libvpx', '-b:v', '4M', '-c:a', 'copy', ...ffmpegOutputThreadArgs(), output]);
       return;
     }
     await retimeH264(base, output, targetBitrate);
@@ -163,7 +189,7 @@ async function retimeH264(base: string[], output: string, targetBitrate: number)
         ...(isHardwareH264Encoder(encoder) ? { targetBitrate } : { softwareCrf: 18 }),
         softwarePreset: 'medium',
       });
-      await runFfmpeg([...base, ...videoArgs, '-c:a', 'copy', output]);
+      await runFfmpeg([...base, ...videoArgs, '-c:a', 'copy', ...ffmpegOutputThreadArgs(), output]);
       return;
     } catch (error) {
       lastError = error;

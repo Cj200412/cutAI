@@ -9,7 +9,9 @@ import path from 'node:path';
 import { cp, mkdir, rm, symlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
+  applyFfmpegThreadBudget,
   remotionHardwareAcceleration,
+  resolveFfmpegThreads,
   resolveH264VideoBitrate,
   resolveOffthreadVideoThreads,
   resolveRenderConcurrency,
@@ -35,8 +37,35 @@ let bundlePromise;
 // (默认 undefined = Remotion 自寻/自下载,dev 行为不变)。
 const browserExecutable = () => process.env.CC_BROWSER_EXECUTABLE || undefined;
 
-const renderConcurrency = () => resolveRenderConcurrency();
-const offthreadVideoThreads = () => resolveOffthreadVideoThreads();
+const DEFAULT_PERFORMANCE_SETTINGS = Object.freeze({ cpuPercent: 60, gpuMode: 'auto', h264Encoder: undefined });
+let performanceSettingsProvider = () => DEFAULT_PERFORMANCE_SETTINGS;
+let hardwareEncoderUnavailable = false;
+
+/** @param {() => {cpuPercent?: number, gpuMode?: 'auto'|'off', h264Encoder?: string}} fn */
+export function setPerformanceSettingsProvider(fn) {
+  performanceSettingsProvider = typeof fn === 'function' ? fn : () => DEFAULT_PERFORMANCE_SETTINGS;
+}
+
+function performanceSettings() {
+  try {
+    const value = performanceSettingsProvider() ?? DEFAULT_PERFORMANCE_SETTINGS;
+    return {
+      cpuPercent: value.cpuPercent,
+      gpuMode: value.gpuMode === 'off' ? 'off' : 'auto',
+      h264Encoder: typeof value.h264Encoder === 'string' ? value.h264Encoder : undefined,
+    };
+  } catch (error) {
+    console.warn(`[render] failed to read performance settings; using defaults: ${error instanceof Error ? error.message : String(error)}`);
+    return DEFAULT_PERFORMANCE_SETTINGS;
+  }
+}
+
+const renderConcurrency = (settings = performanceSettings()) => resolveRenderConcurrency({
+  cpuPercent: settings.cpuPercent,
+});
+const offthreadVideoThreads = (settings = performanceSettings()) => resolveOffthreadVideoThreads({
+  cpuPercent: settings.cpuPercent,
+});
 
 /**
  * Prefer the platform encoder, but retry with software when the encoder exists
@@ -45,7 +74,11 @@ const offthreadVideoThreads = () => resolveOffthreadVideoThreads();
  * the encoder is listed in the bundled FFmpeg build.
  */
 async function renderMediaOptimized(options) {
-  const hardwareAcceleration = remotionHardwareAcceleration(options.codec);
+  const settings = performanceSettings();
+  const hardwareAcceleration = remotionHardwareAcceleration(options.codec, {
+    disabled: settings.gpuMode === 'off' || hardwareEncoderUnavailable ? true : undefined,
+    encoder: settings.h264Encoder,
+  });
   const automaticHardwareBitrate = hardwareAcceleration !== 'disable' && !options.videoBitrate
     ? resolveH264VideoBitrate({
       width: options.composition.width,
@@ -56,8 +89,12 @@ async function renderMediaOptimized(options) {
     : null;
   const optimized = {
     ...options,
-    concurrency: renderConcurrency(),
-    offthreadVideoThreads: offthreadVideoThreads(),
+    concurrency: renderConcurrency(settings),
+    offthreadVideoThreads: offthreadVideoThreads(settings),
+    ffmpegOverride: (info) => applyFfmpegThreadBudget(
+      options.ffmpegOverride ? options.ffmpegOverride(info) : info.args,
+      resolveFfmpegThreads({ cpuPercent: settings.cpuPercent }),
+    ),
     hardwareAcceleration,
     ...(automaticHardwareBitrate ? { videoBitrate: automaticHardwareBitrate } : {}),
   };
@@ -73,6 +110,7 @@ async function renderMediaOptimized(options) {
       if (options.outputLocation) await rm(options.outputLocation, { force: true }).catch(() => {});
     },
     onFallback: () => {
+      hardwareEncoderUnavailable = true;
       console.warn(`[render] hardware encoder unavailable; retrying ${options.codec} with software encoding`);
     },
   });

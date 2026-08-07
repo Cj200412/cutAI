@@ -4,6 +4,11 @@ import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { uploadDir } from '../media-dir.ts';
+import {
+  ffmpegOutputThreadArgs,
+  ffmpegThreadArgs,
+  withHeavyTaskPermit,
+} from '../performance-budget.ts';
 import { fetchGeneratedResult } from './result-download.ts';
 
 function rawFormat(codec: string): string | undefined {
@@ -14,13 +19,13 @@ function rawFormat(codec: string): string | undefined {
 }
 
 function runFfmpeg(args: string[]): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
+  return withHeavyTaskPermit(() => new Promise((resolvePromise, reject) => {
     const child = spawn('ffmpeg', args);
     let error = '';
     child.stderr.on('data', (data) => { error += String(data); });
     child.on('error', reject);
     child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(error.slice(-500))));
-  });
+  }));
 }
 
 async function wrapRaw(bytes: Buffer, codec: string, sampleRate: number): Promise<string> {
@@ -30,7 +35,11 @@ async function wrapRaw(bytes: Buffer, codec: string, sampleRate: number): Promis
   const output = join(dir, `${stem}.wav`);
   await writeFile(input, bytes);
   try {
-    await runFfmpeg(['-y', '-f', rawFormat(codec)!, '-ar', String(sampleRate), '-ac', '1', '-i', input, output]);
+    await runFfmpeg([
+      '-y', ...ffmpegThreadArgs(),
+      '-f', rawFormat(codec)!, '-ar', String(sampleRate), '-ac', '1', '-i', input,
+      ...ffmpegOutputThreadArgs(), output,
+    ]);
   } finally {
     await unlink(input).catch(() => undefined);
   }
@@ -41,7 +50,11 @@ async function pitchShift(file: string, semitones: number, sampleRate: number): 
   if (!semitones) return;
   const factor = 2 ** (semitones / 12);
   const output = `${file}.pitched.mp3`;
-  await runFfmpeg(['-y', '-i', file, '-af', `asetrate=${sampleRate}*${factor},aresample=${sampleRate},atempo=${1 / factor}`, output]);
+  await runFfmpeg([
+    '-y', ...ffmpegThreadArgs(),
+    '-i', file, '-af', `asetrate=${sampleRate}*${factor},aresample=${sampleRate},atempo=${1 / factor}`,
+    ...ffmpegOutputThreadArgs(), output,
+  ]);
   await unlink(file);
   await rename(output, file);
 }

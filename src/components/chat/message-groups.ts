@@ -1,4 +1,5 @@
 import type { DisplayMessage } from '../../agent/useAgent';
+import { hasRenderableToolMedia } from './tool-result';
 
 // Collapse a run of consecutive SAME-name tool messages into one group so the chat
 // doesn't spam 20 identical `edit_gap` rows — repeats render as one compact activity line.
@@ -21,7 +22,11 @@ export function groupMessages(messages: DisplayMessage[]): RenderItem[] {
       let j = i + 1;
       while (j < messages.length && messages[j].role === 'tool' && messages[j].tool?.name === name) j++;
       const run = j - i;
-      if (run >= GROUP_MIN) {
+      const containsFinishedMedia = messages.slice(i, j).some((message) => {
+        const tool = message.tool;
+        return !!tool && hasRenderableToolMedia(tool.name, tool.result);
+      });
+      if (run >= GROUP_MIN && !containsFinishedMedia) {
         const items = [];
         for (let k = i; k < j; k++) items.push({ msg: messages[k], index: k });
         out.push({ kind: 'toolgroup', name, items, index: i });

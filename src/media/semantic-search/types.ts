@@ -31,7 +31,7 @@ export interface FramePixels {
 export type SemanticDevice = 'webgpu' | 'wasm';
 
 export type WorkerRequest =
-  | { id: number; type: 'load'; device: SemanticDevice }
+  | { id: number; type: 'load'; device: SemanticDevice; cpuThreads: number }
   | { id: number; type: 'embed-text'; text: string }
   | { id: number; type: 'embed-image'; frame: FramePixels };
 

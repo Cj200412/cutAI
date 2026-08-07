@@ -205,7 +205,7 @@ http://localhost:5199
 
 也可以直接在「设置」中接入本地或自建服务：生图支持 OpenAI 兼容的 `/v1/images/generations` 与 `/v1/images/edits`，配音支持 `/v1/audio/speech`，转写支持 `/v1/audio/transcriptions`，Firecrawl 支持云端 Key 或自托管 API URL。无鉴权的本地兼容服务可不填 Key；视频和音乐厂商协议并不统一，因此对应页面提供可自由填写的 Base URL 与模型 ID，而不把不同协议误当成通用 OpenAI 接口。
 
-本地 H.264 导出会在 macOS 上优先使用 VideoToolbox，在兼容的 Windows 设备上优先使用 NVENC，失败时自动回退软件编码。可用 `OPENCHATCUT_RENDER_CONCURRENCY` 和 `OPENCHATCUT_MAX_ACTIVE_EXPORTS` 调整渲染并发及重型导出上限，用 `OPENCHATCUT_DISABLE_HARDWARE_ENCODING` 关闭硬件编码，或用 `OPENCHATCUT_H264_ENCODER` 覆盖 FFmpeg 侧的编码器选择；详见 [`.env.example`](.env.example)。
+可在「设置 → 增强工具 → 性能与硬件」限制每个本地高负载任务的 CPU 预算、设置后台媒体任务并发数，并开启自动显卡加速。默认每个新任务最多使用约 60% 的逻辑核心，服务端 FFmpeg、媒体分析与渲染任务逐个排队；浏览器内的本地转写与语义索引也分别串行。支持的任务会探测 VideoToolbox、NVENC、QSV 或 AMF，失败时安全回退软件处理。高级环境变量覆盖见 [`.env.example`](.env.example)。
 
 ### 桌面端开发
 

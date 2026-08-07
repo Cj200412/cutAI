@@ -408,6 +408,48 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   {
     key: 'tools', title: '增强工具', icon: 'sliders',
     groups: [
+      { key: 'performance', title: '性能与硬件', hint: '限制高负载任务的资源占用，并按设备能力启用显卡加速。',
+        vendors: [
+          { key: 'performance/local', vendor: 'localdisk', title: '本机运行资源',
+            note: '设置保存后会立即用于新启动的转写、分析与渲染任务；已在运行的任务保持原配置。',
+            fields: [
+              {
+                name: 'PERFORMANCE_CPU_PERCENT',
+                label: '单任务 CPU 上限',
+                kind: 'select',
+                defaultLabel: '60%（均衡）',
+                note: '限制单个高负载任务使用的逻辑核心数，始终保留一部分 CPU 给界面和系统。',
+                options: [
+                  { value: '35', label: '35%（低占用）' },
+                  { value: '50', label: '50%' },
+                  { value: '60', label: '60%（均衡）' },
+                  { value: '75', label: '75%（较快）' },
+                  { value: '85', label: '85%（最高）' },
+                ],
+              },
+              {
+                name: 'PERFORMANCE_MAX_HEAVY_TASKS',
+                label: '后台媒体任务并发数',
+                kind: 'select',
+                defaultLabel: '1（推荐）',
+                note: '限制服务端 FFmpeg、媒体分析与渲染任务并发；本地转写和语义索引各自串行，避免争抢 CPU 与内存。',
+                options: [
+                  { value: '1', label: '1（推荐）' },
+                  { value: '2', label: '2' },
+                  { value: '3', label: '3' },
+                  { value: '4', label: '4' },
+                ],
+              },
+              {
+                name: 'PERFORMANCE_GPU_ACCELERATION',
+                label: '显卡加速',
+                kind: 'select',
+                defaultLabel: '自动（推荐）',
+                note: '自动模式仅在当前任务和显卡支持时启用；驱动或编码器不可用会回退到 CPU。',
+                options: [{ value: 'off', label: '关闭显卡加速' }],
+              },
+            ] },
+        ] },
       { key: 'sandbox', title: '沙箱执行', hint: 'run_code · 云端沙箱运行 ffmpeg / node / python。',
         vendors: [
           { key: 'sandbox/e2b', vendor: 'e2b', title: 'E2B（新用户试用额度）',
@@ -470,6 +512,7 @@ export function modelValue(status: KeyStatusResponse | null, name: string): stri
 export function vendorConfigured(status: KeyStatusResponse | null, page: SettingsVendorPage): boolean {
   if (!status) return false;
   if (page.key === 'transcription/local') return true;
+  if (page.key === 'performance/local') return true;
   const secrets = page.fields.filter((f) => f.kind === 'secret' && !f.optional);
   if (secrets.length === 0) return page.fields.some((f) => Boolean(status.keys[f.name]?.configured));
   return secrets.every((f) => Boolean(status.keys[f.name]?.configured));
@@ -479,6 +522,7 @@ export function vendorConfigured(status: KeyStatusResponse | null, page: Setting
 export function groupConfigured(status: KeyStatusResponse | null, group: SettingsGroup): boolean {
   if (!status) return false;
   if (group.key === 'llm') return group.vendors.some((page) => vendorConfigured(status, page));
+  if (group.key === 'performance') return true;
   return Boolean(status.caps[group.key]);
 }
 

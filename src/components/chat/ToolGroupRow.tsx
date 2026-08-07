@@ -3,9 +3,24 @@ import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { ChatMessage } from './ChatMessage';
 import type { DisplayMessage } from '../../agent/useAgent';
-import { hasToolResultError } from './tool-result';
+import { aggregateToolResultStates, type ToolResultState } from './tool-result';
 
 const GREEN = theme.success;
+const STATE_COLOR: Record<ToolResultState, string> = {
+  pending: theme.accent,
+  success: GREEN,
+  partial: theme.gold,
+  failed: theme.danger,
+  denied: theme.gold,
+};
+
+const STATE_LABEL: Record<ToolResultState, string> = {
+  pending: '处理中',
+  success: '已完成',
+  partial: '部分完成',
+  failed: '失败',
+  denied: '已拒绝',
+};
 
 // Collapsed row for a run of same-name tool calls: "● edit_gap · 20 次 ▸".
 // Click to expand the individual rows (each keeps its own arg summary). Mirrors
@@ -13,10 +28,7 @@ const GREEN = theme.success;
 export function ToolGroupRow({ name, items }: { name: string; items: { msg: DisplayMessage; index: number }[] }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const anyError = items.some(({ msg }) => {
-    const r = msg.tool?.result;
-    return hasToolResultError(r);
-  });
+  const state = aggregateToolResultStates(items.map(({ msg }) => msg.tool?.result));
   return (
     <div style={{ margin: '9px 0' }}>
       <button
@@ -24,9 +36,10 @@ export function ToolGroupRow({ name, items }: { name: string; items: { msg: Disp
         title={open ? t('收起') : t('展开全部')}
         style={{ display: 'flex', alignItems: 'center', gap: 9, background: 'none', border: 'none', cursor: 'pointer', color: theme.textDim, fontSize: 12.5, padding: 0, textAlign: 'left' }}
       >
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: anyError ? theme.danger : GREEN, flexShrink: 0 }} />
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATE_COLOR[state], flexShrink: 0 }} />
         <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: 0.2 }}>{name}</span>
         <span style={{ opacity: 0.8 }}>· {t('{n} 次', { n: items.length })}</span>
+        <span style={{ color: STATE_COLOR[state] }}>{t(STATE_LABEL[state])}</span>
         <span style={{ fontSize: 9, opacity: 0.7 }}>{open ? '▾' : '▸'}</span>
       </button>
       {open && (

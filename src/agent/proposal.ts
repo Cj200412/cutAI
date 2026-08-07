@@ -6,7 +6,8 @@
 // Operation{tool,args,action,target,impact,risk,rationale}); we additionally
 // carry the store actions per operation so approve can replay them atomically.
 import type { AnyAction } from '../editor/store';
-import type { ProjectDoc, TimelineState } from '../editor/types';
+import { projectReduce } from '../editor/reduce';
+import { activeEditorState, type ProjectDoc, type TimelineState } from '../editor/types';
 import { migrateProjectDoc } from '../persist/projectStore';
 
 export interface Operation {
@@ -160,6 +161,16 @@ export function buildProposal(operations: Operation[], assistantText: string, ba
     baseDoc,
     resultState,
   };
+}
+
+/** Rebuild the player preview from the proposal snapshot and checked rows only. */
+export function previewProposalSelection(proposal: Proposal, selected: ReadonlySet<number>): TimelineState {
+  const operations = proposal.options[0]?.operations ?? [];
+  const previewDoc = operations.reduce((doc, operation, index) => {
+    if (!selected.has(index)) return doc;
+    return operation.actions.reduce((next, action) => projectReduce(next, action), doc);
+  }, proposal.baseDoc);
+  return activeEditorState(previewDoc);
 }
 
 /**

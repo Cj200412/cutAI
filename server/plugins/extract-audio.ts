@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { rename, stat, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { isSafeUploadName, resolveUploadFile, uploadDir } from '../media-dir.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 
 const MAX_JSON = 8 * 1024;
 const ASR_BITRATE = '64k';
@@ -95,10 +96,12 @@ async function tryEncode(
   await runFfmpeg(
     [
       '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+      ...ffmpegThreadArgs(),
       '-i', inputPath,
       '-vn',
       '-map', '0:a:0?',
       ...codecArgs,
+      ...ffmpegOutputThreadArgs(),
       partPath,
     ],
     FFMPEG_TIMEOUT_MS,
@@ -178,7 +181,9 @@ export function extractAudioPlugin(): Plugin {
             }
           }
 
-          const { file, bytes } = await extractAsrAudio(inputPath, dir, stem);
+          const { file, bytes } = await withHeavyTaskPermit(
+            () => extractAsrAudio(inputPath, dir, stem),
+          );
           if (bytes <= 0) {
             sendJson(res, 422, { error: 'extracted audio is empty (source may have no audio track)' });
             return;

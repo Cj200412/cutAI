@@ -9,13 +9,23 @@ export class TaskLimiter {
   private active = 0;
   private readonly waiting: WaitingTask[] = [];
 
-  private readonly limit: number;
+  private limit: number;
 
   constructor(limit: number) {
     if (!Number.isInteger(limit) || limit < 1) {
       throw new RangeError('task limiter limit must be a positive integer');
     }
     this.limit = limit;
+  }
+
+  /** Apply a live settings change. Lower limits affect future starts; raising
+   * the limit immediately drains as many queued tasks as the new budget allows. */
+  setLimit(limit: number): void {
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new RangeError('task limiter limit must be a positive integer');
+    }
+    this.limit = limit;
+    this.drain();
   }
 
   acquire(): Promise<ReleaseTaskPermit> {
@@ -44,12 +54,17 @@ export class TaskLimiter {
     return () => {
       if (released) return;
       released = true;
-      const next = this.waiting.shift();
-      if (next) {
-        next.resolve(this.releaseOnce());
-        return;
-      }
       this.active -= 1;
+      this.drain();
     };
+  }
+
+  private drain(): void {
+    while (this.active < this.limit) {
+      const next = this.waiting.shift();
+      if (!next) return;
+      this.active += 1;
+      next.resolve(this.releaseOnce());
+    }
   }
 }

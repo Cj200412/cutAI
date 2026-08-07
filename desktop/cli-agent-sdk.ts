@@ -5,6 +5,11 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import {
+  ffmpegOutputThreadArgs,
+  ffmpegThreadArgs,
+  withHeavyTaskPermit,
+} from '../server/performance-budget.ts';
 
 const ffmpegStatic = createRequire(import.meta.url)('ffmpeg-static') as string | null;
 import { CUTAI_AGENT_SYSTEM_PROMPT, ensureCutaiAgentGuides } from './cli-agent-guidance.ts';
@@ -31,11 +36,15 @@ async function prepareVisualEvidence(projectRoot: string): Promise<string | unde
   const dir = join(projectRoot, '.cutai', 'agent-guides');
   const output = join(dir, 'source-preview.jpg');
   await mkdir(dir, { recursive: true });
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(ffmpegStatic as string, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', '1', '-i', source, '-frames:v', '1', '-vf', 'scale=1280:-2', output]);
+  await withHeavyTaskPermit(() => new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(ffmpegStatic as string, [
+      '-hide_banner', '-loglevel', 'error', '-y', ...ffmpegThreadArgs(),
+      '-ss', '1', '-i', source, '-frames:v', '1', '-vf', 'scale=1280:-2',
+      ...ffmpegOutputThreadArgs(), output,
+    ]);
     let error = ''; child.stderr?.on('data', (chunk: Buffer) => { error += String(chunk); });
     child.on('error', reject); child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(error || `ffmpeg exited ${code}`)));
-  }).catch(() => undefined);
+  })).catch(() => undefined);
   return existsSync(output) ? output : undefined;
 }
 

@@ -6,6 +6,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 
 import { uploadDir } from '../media-dir.ts';
+import {
+  ffmpegOutputThreadArgs,
+  ffmpegThreadArgs,
+  withHeavyTaskPermit,
+} from '../performance-budget.ts';
 
 const OUTPUT_FORMATS = new Set([
   'mp3_22050_32', 'mp3_24000_48', 'mp3_44100_32', 'mp3_44100_64',
@@ -113,14 +118,21 @@ async function wrapRawAudio(bytes: Buffer, format: string): Promise<{ file: stri
   const input = join(dir, `${stem}.raw`);
   const output = join(dir, `${stem}.wav`);
   await writeFile(input, bytes);
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn('ffmpeg', ['-y', '-f', raw.format, '-ar', raw.rate, '-ac', '1', '-i', input, output]);
-    let error = '';
-    child.stderr.on('data', (data) => { error += String(data); });
-    child.on('error', reject);
-    child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(error.slice(-500))));
-  });
-  await unlink(input).catch(() => undefined);
+  try {
+    await withHeavyTaskPermit(() => new Promise<void>((resolvePromise, reject) => {
+      const child = spawn('ffmpeg', [
+        '-y', ...ffmpegThreadArgs(),
+        '-f', raw.format, '-ar', raw.rate, '-ac', '1', '-i', input,
+        ...ffmpegOutputThreadArgs(), output,
+      ]);
+      let error = '';
+      child.stderr.on('data', (data) => { error += String(data); });
+      child.on('error', reject);
+      child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(error.slice(-500))));
+    }));
+  } finally {
+    await unlink(input).catch(() => undefined);
+  }
   return { file: output, ext: 'wav' };
 }
 

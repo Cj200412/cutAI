@@ -49,6 +49,7 @@ export const KEY_NAMES = [
   'FIRECRAWL_API_KEY', 'FIRECRAWL_BASE_URL',
   'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_ENABLED', 'R2_PRESIGN',
   'MEDIA_DIR',
+  'PERFORMANCE_CPU_PERCENT', 'PERFORMANCE_MAX_HEAVY_TASKS', 'PERFORMANCE_GPU_ACCELERATION',
   // ── model ids (non-secret config; raw values echoed via keyStatus().models) ──
   'LLM_PROVIDER', 'LLM_MODEL',
   'IMAGE_MODEL', 'GEMINI_IMAGE_MODEL', 'MINIMAX_IMAGE_MODEL',
@@ -80,6 +81,7 @@ export const NON_SECRET_NAMES: ReadonlySet<string> = new Set([
   'R2_ENABLED', // 云同步开关('' 缺省=启用,'0'=停用)——配置不是凭据
   'R2_PRESIGN', // 浏览器预签名直传('' 缺省=启用,'0'=仅服务端写穿)
   'MEDIA_DIR',  // 素材保存目录(本机路径,''=默认 public/media/uploads)——配置不是凭据
+  'PERFORMANCE_CPU_PERCENT', 'PERFORMANCE_MAX_HEAVY_TASKS', 'PERFORMANCE_GPU_ACCELERATION',
   ...LLM_PROVIDER_PRESETS.flatMap((preset) => {
     const names = llmProviderConfigNames(preset.id);
     return [names.baseUrl, names.model];

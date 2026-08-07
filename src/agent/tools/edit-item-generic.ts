@@ -5,7 +5,7 @@
 // the same editor commands the dedicated move_item / set_item_timing / remove_item tools
 // use — no logic duplication, just atomic-batch semantics.
 import type { ItemKeyframes, Keyframe, KeyframeProp, MediaAsset, TimelineItem, TimelineState } from '../../editor/types';
-import { defaultTrackId, resolveTrackId } from '../../editor/types';
+import { resolveTrackId } from '../../editor/types';
 import { isValidEasing } from '../../editor/keyframes';
 import { getKeyframePropertyDefinition, KEYFRAME_PROPS, supportsKeyframeProperty } from '../../editor/keyframeRegistry';
 
@@ -241,9 +241,18 @@ export function validateGenericAdd(
   if (asset.kind !== type) return { error: `asset ${asset.id} is kind=${asset.kind}, not ${type} — pass type:"${asset.kind}"` };
 
   const family = type === 'audio' ? 'audio' : 'video';
-  const track = resolveTrackId(state, entry.track ?? entry.trackId ?? (family === 'audio' ? 'A1' : 'V1'), family)
-    ?? defaultTrackId(state, family);
-  if (!track) return { error: `no ${family} track for placement — create one with edit_track first` };
+  const requestedTrack = entry.track ?? entry.trackId;
+  // Automatic placement is centralized in EditorCommands so Agent and UI use
+  // exactly the same MG/main-media lane policy.
+  const track = requestedTrack === undefined
+    ? undefined
+    : resolveTrackId(state, requestedTrack, family);
+  if (requestedTrack !== undefined && !track) {
+    return { error: `no compatible ${family} track "${String(requestedTrack)}"` };
+  }
+  if (track && state.tracks?.[track]?.locked) {
+    return { error: `${family} track "${String(requestedTrack)}" is locked` };
+  }
 
   const startFrame = finiteNum(entry.startFrame) ?? finiteNum(entry.fromFrame);
   const durationInFrames = finiteNum(entry.durationInFrames);
@@ -252,7 +261,7 @@ export function validateGenericAdd(
     kind: type,
     plan: 'addMedia',
     assetId: asset.id,
-    track,
+    ...(track ? { track } : {}),
     ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
     ...(durationInFrames !== undefined && durationInFrames > 0 ? { durationInFrames: Math.round(durationInFrames) } : {}),
   };

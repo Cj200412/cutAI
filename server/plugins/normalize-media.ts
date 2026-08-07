@@ -17,6 +17,7 @@ import {
   resolveH264Encoder,
 } from '../media-acceleration.ts';
 import { ffmpegBin, ffprobeBin } from '../media-binaries.ts';
+import { ffmpegOutputThreadArgs, ffmpegThreadArgs, withHeavyTaskPermit } from '../performance-budget.ts';
 import { putUploadFile, r2Config } from '../r2.ts';
 
 const MAX_JSON = 8 * 1024;
@@ -275,6 +276,7 @@ async function encodeNormalized(
   for (const encoder of h264EncoderAttempts(preferred)) {
     const args = [
       '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+      ...ffmpegThreadArgs(),
       '-i', inputPath,
       '-map', '0:v:0',
       ...(meta.hasAudio ? ['-map', '0:a:0?'] : ['-an']),
@@ -292,7 +294,7 @@ async function encodeNormalized(
       '-movflags', '+faststart',
     ];
     if (meta.hasAudio) args.push('-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE);
-    args.push(outputPath);
+    args.push(...ffmpegOutputThreadArgs(), outputPath);
     try {
       await run(ffmpeg, args, FFMPEG_TIMEOUT_MS);
       return;
@@ -393,7 +395,16 @@ export function normalizeMediaPlugin(): Plugin {
 
           server.config.logger.info(`[normalize-media] ${name}: ${reason}`);
           const convertToCfr = forceCfr || meta.variableFrameRate;
-          await encodeNormalized(inputPath, tmpPath, meta, targetW, targetH, targetBitrate, targetFps, convertToCfr);
+          await withHeavyTaskPermit(() => encodeNormalized(
+            inputPath,
+            tmpPath,
+            meta,
+            targetW,
+            targetH,
+            targetBitrate,
+            targetFps,
+            convertToCfr,
+          ));
 
           // Publish: if same path, atomic replace; if new .mp4 name, swap and drop old
           if (outPath === inputPath || basename(outPath) === name) {

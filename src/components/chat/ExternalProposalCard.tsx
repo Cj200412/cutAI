@@ -1,18 +1,19 @@
-import { useEffect } from 'react';
+import { useMemo } from 'react';
 import type { ExternalProposalController } from '../../agent/useExternalAgentBridge';
-import type { TimelineState } from '../../editor/types';
 import { useT } from '../../i18n/locale';
 import { theme } from '../../theme';
 import { ProposalCard } from './ProposalCard';
 
-export function ExternalProposalCard({ external, onPreviewState }: {
+export function ExternalProposalCard({ external, stale, preview, onPreview }: {
   external: ExternalProposalController;
-  onPreviewState: (state: TimelineState | null) => void;
+  stale: boolean;
+  preview: boolean;
+  onPreview: (selected: ReadonlySet<number> | null) => void;
 }) {
   const t = useT();
-  useEffect(() => {
-    if (!external.proposal) onPreviewState(null);
-  }, [external.proposal, onPreviewState]);
+  const proposal = useMemo(() => external.proposal
+    ? { ...external.proposal, title: `${external.proposal.title} ${t('编辑提案')}` }
+    : null, [external.proposal, t]);
 
   return (
     <>
@@ -21,14 +22,15 @@ export function ExternalProposalCard({ external, onPreviewState }: {
           {t('外部 Agent：{message}', { message: external.error })}
         </div>
       )}
-      {external.proposal && (
+      {proposal && (
         <ProposalCard
-          proposal={{ ...external.proposal, title: `${external.proposal.title} ${t('编辑提案')}` }}
+          proposal={proposal}
           onApply={external.applyProposal}
           onReject={external.rejectProposal}
-          stale={external.proposalStale}
+          stale={stale}
+          preview={preview}
           onForceApply={external.forceApplyProposal}
-          onPreview={(on) => onPreviewState(on ? external.proposal!.resultState : null)}
+          onPreview={onPreview}
         />
       )}
     </>

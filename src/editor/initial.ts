@@ -2,7 +2,7 @@ import templatesJson from '../../assets/templates/openchatcut-templates.json';
 import socialShortsJson from '../../assets/templates/social-shorts-templates.json';
 import kouboScenesJson from '../../assets/templates/koubo-scenes-templates.json';
 import type { Tpl } from '../types';
-import type { TimelineState } from './types';
+import { MOTION_GRAPHIC_TRACK_NAME, type TimelineState } from './types';
 
 // The template library + the first-run seed project. Shared by the loader shell
 // (fallback when nothing is persisted) and the editor (agent context / library).
@@ -17,7 +17,7 @@ export const TEMPLATES = [
 
 const pick = (name: string): Tpl => TEMPLATES.find((t) => t.name.includes(name)) ?? TEMPLATES[0];
 const seedItem = (id: string, tpl: Tpl, startFrame: number) => ({
-  id, track: 'V1' as const, startFrame, durationInFrames: tpl.durationInFrames,
+  id, track: 'V2' as const, startFrame, durationInFrames: tpl.durationInFrames,
   kind: 'motion-graphic' as const, templateId: tpl.id, name: tpl.name,
   code: tpl.code, props: { ...tpl.props }, width: tpl.width, height: tpl.height,
 });
@@ -32,5 +32,6 @@ export const INITIAL: TimelineState = {
     seedItem('seed_1', SEED_A, 0),
     seedItem('seed_2', SEED_B, SEED_A.durationInFrames),
   ],
+  tracks: { V2: { kind: 'video', name: MOTION_GRAPHIC_TRACK_NAME } },
   selectedId: null,
 };

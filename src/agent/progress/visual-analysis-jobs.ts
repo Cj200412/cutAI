@@ -1,7 +1,7 @@
 // Client-side visual-analysis job table for track_progress target=visual-analysis.
 // Analysis jobs run after ingest so the agent can wait before using frame tools.
-// Lightweight readiness probe — contact-sheet extraction for /media/uploads.
-// video, or instant succeed for images; blob placeholders stay "running" until relink.
+// Lightweight readiness probe for local media, or instant success for images;
+// blob placeholders stay "running" until relink.
 //
 // view_asset_frames / view_timeline_frames remain the actual vision path; this job only
 // answers whether the asset is pre-warmed and reachable by frame tools.
@@ -30,7 +30,9 @@ export interface VisualAnalysisReport extends JobReportBase<VisualAnalysisStatus
   note?: string;
 }
 
-/** Idempotent start. video → extract-frames warm; image → succeed; audio → not visual. */
+/** Idempotent start. Local video/image → reachability probe; audio → not visual.
+ * Frames are intentionally extracted only when an Agent actually asks to view
+ * them. The old eager contact sheet was discarded and then generated again. */
 export function enqueueVisualAnalysis(
   asset: Pick<MediaAsset, 'id' | 'src' | 'kind'>,
 ): void {
@@ -82,41 +84,16 @@ async function runAnalysis(
     };
   }
 
-  // Video: warm contact sheet via server ffmpeg when on /media/uploads.
+  // Local video: a HEAD/range reachability probe is enough. Actual contact
+  // sheets are generated on demand by view_asset_frames and can then be used.
   if (src.startsWith('/media/uploads/')) {
-    try {
-      const res = await fetch('/api/extract-frames', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ src, count: 4 }),
-      });
-      if (res.ok) {
-        const data = (await res.json().catch(() => ({}))) as {
-          count?: number;
-          frames?: unknown[];
-          ok?: boolean;
-        };
-        const n = typeof data.count === 'number'
-          ? data.count
-          : Array.isArray(data.frames) ? data.frames.length : 4;
-        return {
-          assetId: asset.id,
-          status: 'succeeded',
-          sampleCount: n,
-          note: 'contact-sheet warm complete; use view_asset_frames for vision',
-        };
-      }
-      // extract may be unavailable — fall through to reachability probe
-    } catch {
-      /* probe path */
-    }
     const ok = await isMediaSrcReachable(src);
     return {
       assetId: asset.id,
       status: ok ? 'succeeded' : 'failed',
       sampleCount: ok ? 0 : undefined,
       note: ok
-        ? 'source reachable (contact-sheet warm skipped); use view_asset_frames'
+        ? 'source reachable; frames will be analyzed on demand'
         : 'source not reachable',
       error: ok ? undefined : 'media not reachable',
     };

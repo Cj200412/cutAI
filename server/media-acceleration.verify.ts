@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { ffmpegBin } from './media-binaries.ts';
 import {
   h264EncoderAttempts,
+  h264EncoderProbeArgs,
   h264EncodingArgs,
   h264HardwareCandidates,
   isHardwareH264Encoder,
@@ -17,6 +18,14 @@ assert.equal(isHardwareH264Encoder('h264_videotoolbox'), true);
 assert.equal(isHardwareH264Encoder('libx264'), false);
 assert.deepEqual(h264EncoderAttempts('h264_nvenc'), ['h264_nvenc', 'libx264']);
 assert.deepEqual(h264EncoderAttempts('libx264'), ['libx264']);
+assert.deepEqual(h264EncoderProbeArgs('h264_amf'), [
+  '-hide_banner', '-loglevel', 'error',
+  '-f', 'lavfi', '-i', 'color=c=black:s=128x128:r=30',
+  '-frames:v', '1', '-an',
+  '-c:v', 'h264_amf', '-pix_fmt', 'nv12',
+  '-f', 'null', '-',
+]);
+assert.ok(h264EncoderProbeArgs('h264_nvenc').includes('yuv420p'));
 
 assert.deepEqual(h264EncodingArgs({ encoder: 'libx264' }), [
   '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '18',

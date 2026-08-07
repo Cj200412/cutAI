@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { PlayerRef } from '@remotion/player';
 import { theme, themeAlpha } from '../../theme';
 import {
-  captionTrackEntries, captionsOnTrack, defaultTrackId, selectedIdsOf, timelineDuration, timelineTrackIds, trackAlias, trackKind,
+  captionTrackEntries, captionsOnTrack, defaultTrackId, MOTION_GRAPHIC_TRACK_NAME,
+  selectedIdsOf, timelineDuration, timelineTrackIds, trackAlias, trackKind,
   type TimelineItem, type TimelineState, type TrackId,
 } from '../../editor/types';
 import type { EditorCommands } from '../../editor/store';
@@ -329,7 +330,13 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
             const headConfig = meta.kind === 'caption' ? { ...config, hidden } : config;
             const locked = config.locked ?? false;
             const kindLabel = meta.kind === 'video' ? '视频' : meta.kind === 'audio' ? '音频' : '字幕';
-            const trackName = config.name || `${t(kindLabel)} ${alias.slice(1)}`;
+            const legacyPureMg = meta.kind === 'video'
+              && items.length > 0
+              && items.every((item) => item.kind === 'motion-graphic');
+            const trackName = config.name
+              || (legacyPureMg
+                ? t(MOTION_GRAPHIC_TRACK_NAME)
+                : `${t(kindLabel)} ${alias.slice(1)}`);
             const busy = items.length > 0 || !!trackCaptions
               || (state.transitions ?? []).some((transition) => transition.trackId === trackId);
             return (

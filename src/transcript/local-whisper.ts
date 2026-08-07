@@ -1,5 +1,10 @@
 import type { TranscriptResult } from './types';
 import type { LocalTranscriptionDevice } from '../../shared/transcription-providers';
+import {
+  normalizeGpuAccelerationMode,
+  resolveCpuThreadLimit,
+  type GpuAccelerationMode,
+} from '../../shared/performance-settings';
 
 interface WorkerResult {
   text: string;
@@ -18,8 +23,10 @@ const RUNTIME_STATE_KEY = 'cutai.local-transcription-runtime';
 let runtimeState: LocalTranscriptionRuntimeState = 'installed';
 
 let worker: Worker | null = null;
+let workerCpuThreads = 0;
 let nextId = 1;
 const pending = new Map<number, Pending>();
+let localTranscriptionQueue: Promise<void> = Promise.resolve();
 
 function runtimeStorage(): Storage | null {
   if (typeof localStorage === 'undefined') return null;
@@ -60,6 +67,7 @@ function terminateWorker(reason: Error): number {
   const active = pending.size;
   worker?.terminate();
   worker = null;
+  workerCpuThreads = 0;
   for (const job of pending.values()) job.reject(reason);
   pending.clear();
   return active;
@@ -79,9 +87,14 @@ export function installLocalTranscriptionRuntime(): void {
   setRuntimeState('installed');
 }
 
-function transcriptWorker(): Worker {
+function transcriptWorker(cpuThreads: number): Worker {
+  if (worker && workerCpuThreads !== cpuThreads && pending.size === 0) {
+    worker.terminate();
+    worker = null;
+  }
   if (worker) return worker;
   worker = new Worker(new URL('./local-whisper.worker.ts', import.meta.url), { type: 'module' });
+  workerCpuThreads = cpuThreads;
   worker.onmessage = (event: MessageEvent<Record<string, unknown>>) => {
     const id = Number(event.data.id);
     const job = pending.get(id);
@@ -103,8 +116,43 @@ function transcriptWorker(): Worker {
     pending.clear();
     worker?.terminate();
     worker = null;
+    workerCpuThreads = 0;
   };
   return worker;
+}
+
+interface LocalRuntimePerformance {
+  cpuThreads: number;
+  gpuMode: GpuAccelerationMode;
+}
+
+export function resolvePerformanceTranscriptionDevice(
+  requested: LocalTranscriptionDevice,
+  gpuMode: unknown,
+): LocalTranscriptionDevice {
+  return normalizeGpuAccelerationMode(gpuMode) === 'off' ? 'wasm' : requested;
+}
+
+async function configuredRuntimePerformance(): Promise<LocalRuntimePerformance> {
+  let configured = '';
+  let gpuMode: unknown = '';
+  try {
+    const response = await fetch('/api/keys', { cache: 'no-store' });
+    if (response.ok) {
+      const status = (await response.json()) as { models?: Record<string, string> };
+      configured = status.models?.PERFORMANCE_CPU_PERCENT ?? '';
+      gpuMode = status.models?.PERFORMANCE_GPU_ACCELERATION ?? '';
+    }
+  } catch {
+    // The local runtime also works in isolated/browser-only checks. Use the
+    // conservative default when the settings endpoint is unavailable.
+  }
+  // ORT WebAssembly is memory-heavy per worker; its own safe default caps at
+  // four threads, so the product CPU budget may lower but never raise that cap.
+  return {
+    cpuThreads: Math.min(4, resolveCpuThreadLimit(configured, navigator.hardwareConcurrency || 1)),
+    gpuMode: normalizeGpuAccelerationMode(gpuMode),
+  };
 }
 
 function textTokens(text: string): string[] {
@@ -169,7 +217,7 @@ async function decodeMono16k(blob: Blob): Promise<Float32Array> {
   }
 }
 
-export async function transcribeLocalBlob(
+async function transcribeLocalBlobQueued(
   blob: Blob,
   model: string,
   device: LocalTranscriptionDevice,
@@ -178,15 +226,33 @@ export async function transcribeLocalBlob(
   if (inspectLocalTranscriptionRuntime() === 'uninstalled') {
     throw new Error('本地转写运行框架已卸载，请到“设置 → 素材 · 转写”恢复运行框架后重试');
   }
+  const runtimePerformance = configuredRuntimePerformance();
   const audio = await decodeMono16k(blob);
   if (inspectLocalTranscriptionRuntime() === 'uninstalled') {
     throw new Error('本地转写运行框架已卸载，请到“设置 → 素材 · 转写”恢复运行框架后重试');
   }
+  const { cpuThreads, gpuMode } = await runtimePerformance;
+  const effectiveDevice = resolvePerformanceTranscriptionDevice(device, gpuMode);
   const id = nextId++;
+  const target = transcriptWorker(cpuThreads);
   const promise = new Promise<TranscriptResult>((resolve, reject) => {
     pending.set(id, { resolve, reject, onProgress });
   });
-  transcriptWorker().postMessage({ id, type: 'transcribe', model, device, audio }, [audio.buffer]);
+  target.postMessage({ id, type: 'transcribe', model, device: effectiveDevice, cpuThreads, audio }, [audio.buffer]);
   onProgress?.();
   return promise;
+}
+
+export function transcribeLocalBlob(
+  blob: Blob,
+  model: string,
+  device: LocalTranscriptionDevice,
+  onProgress?: () => void,
+): Promise<TranscriptResult> {
+  // Queue the complete memory-heavy path, including browser audio decoding.
+  // This also gives a changed thread budget a clean worker boundary once the
+  // preceding task has removed itself from `pending`.
+  const task = localTranscriptionQueue.then(() => transcribeLocalBlobQueued(blob, model, device, onProgress));
+  localTranscriptionQueue = task.then(() => undefined, () => undefined);
+  return task;
 }

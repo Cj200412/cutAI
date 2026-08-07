@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer, useRef } from 'react';
 import type { AspectFit, ClipEffect, ClipFilters, ClipTransform, DesignStyle, KeyframeEasing, KeyframeProp, Marker, MediaAsset, ProjectDoc, Timeline, TimelineState, TrackFlags, TrackId, TrackKind, TrackUpdate, TransitionItem, TransitionType, Watermark, ZoomEffect } from './types';
-import { activeEditorState, activeTimeline, defaultTrackId, resolveTrackId } from './types';
+import { activeEditorState, activeTimeline, defaultMediaTrackId, defaultTrackId, MOTION_GRAPHIC_TRACK_NAME, motionGraphicTrackCandidate, resolveTrackId } from './types';
 import type { Tpl } from '../types';
 import type { AudioAsset } from '../audio/library';
 import type { CaptionsData } from '../captions/types';
@@ -20,7 +20,7 @@ export { reduce, projectReduce } from './reduce';
 const uid = (p: string) => `${p}_${crypto.randomUUID()}`;
 
 export interface EditorCommands {
-  addMotionGraphic: (tpl: Tpl, at?: { track?: TrackId; startFrame?: number; ripple?: boolean }) => void;
+  addMotionGraphic: (tpl: Tpl, at?: { track?: TrackId; startFrame?: number; ripple?: boolean }) => TrackId;
   addAudio: (asset: AudioAsset, at?: { track?: TrackId; startFrame?: number; ripple?: boolean }) => void;
   addAsset: (asset: MediaAsset) => void;
   addMediaItem: (asset: MediaAsset, at?: { track?: TrackId; startFrame?: number; ripple?: boolean }) => string;
@@ -187,6 +187,40 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
     dispatch({ type: 'track.create', track: { id, kind } });
     return id;
   };
+  const pickMediaTrack = (ref: TrackId | undefined, kind: TrackKind): TrackId => {
+    if (ref !== undefined) return pickTrack(ref, kind);
+    const state = activeTimeline(getDoc());
+    const existing = defaultMediaTrackId(state, kind);
+    if (existing) return existing;
+    const id = uid('track');
+    // Main picture belongs below overlays. Video order=0 is the bottom lane;
+    // audio keeps the established top-first default.
+    dispatch({ type: 'track.create', track: { id, kind }, ...(kind === 'video' ? { order: 0 } : {}) });
+    return id;
+  };
+  const pickMotionGraphicTrack = (ref?: TrackId): TrackId => {
+    const state = activeTimeline(getDoc());
+    // An explicit target is user intent (drag/drop or tool argument): keep it,
+    // but never report success for a missing or locked lane.
+    if (ref !== undefined) {
+      const target = resolveTrackId(state, ref, 'video');
+      if (!target) throw new Error(`video track "${ref}" not found`);
+      if (state.tracks?.[target]?.locked) throw new Error(`video track "${ref}" is locked`);
+      return target;
+    }
+    const candidate = motionGraphicTrackCandidate(state);
+    if (candidate) {
+      // Empty and legacy pure-MG lanes become persistent, named MG lanes.
+      if (state.tracks?.[candidate]?.name !== MOTION_GRAPHIC_TRACK_NAME) {
+        dispatch({ type: 'track.update', track: candidate, patch: { name: MOTION_GRAPHIC_TRACK_NAME } });
+      }
+      return candidate;
+    }
+    const id = uid('track');
+    // Default video insertion is the top visual lane, appropriate for overlays.
+    dispatch({ type: 'track.create', track: { id, kind: 'video', name: MOTION_GRAPHIC_TRACK_NAME } });
+    return id;
+  };
   return {
       createTimeline: (opts) => {
         const d = getDoc();
@@ -252,14 +286,15 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
       },
       setDesignStyle: (style) => dispatch({ type: 'design.set', style }),
       patchDesignStyle: (patch) => dispatch({ type: 'design.patch', patch }),
-      addMotionGraphic: (tpl, at) =>
+      addMotionGraphic: (tpl, at) => {
+        const track = pickMotionGraphicTrack(at?.track);
         dispatch({
           type: 'add',
           startFrame: at?.startFrame,
           ripple: at?.ripple,
           item: {
             id: uid('item'),
-            track: pickTrack(at?.track, 'video'),
+            track,
             durationInFrames: tpl.durationInFrames,
             kind: 'motion-graphic',
             templateId: tpl.id,
@@ -269,7 +304,9 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
             width: tpl.width,
             height: tpl.height,
           },
-        }),
+        });
+        return track;
+      },
       addAudio: (asset, at) =>
         dispatch({
           type: 'add',
@@ -306,7 +343,7 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
         const item = asset.kind === 'motion-graphic'
           ? {
               id: uid('item'),
-              track: pickTrack(at?.track, 'video'),
+              track: pickMotionGraphicTrack(at?.track),
               durationInFrames: asset.durationInFrames,
               kind: 'motion-graphic' as const,
               templateId: asset.id,
@@ -318,7 +355,9 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
             }
           : {
               id: uid('item'),
-              track: pickTrack(at?.track, asset.kind === 'audio' ? 'audio' : 'video'),
+              track: asset.kind === 'audio'
+                ? pickTrack(at?.track, 'audio')
+                : pickMediaTrack(at?.track, 'video'),
               durationInFrames: asset.durationInFrames,
               kind: asset.kind as Exclude<typeof asset.kind, 'motion-graphic'>,
               name: asset.name,

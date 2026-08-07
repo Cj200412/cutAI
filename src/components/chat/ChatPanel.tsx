@@ -11,6 +11,7 @@ import { ExternalProposalCard } from './ExternalProposalCard';
 import { thinkingPhrase } from './thinkingPhrases';
 import { onSelectionRef, refPromptToken, setSelectionRefMode } from '../../agent/selection-refs';
 import { shouldBlockAutoApply } from '../../agent/skills/skillGuard';
+import { isProposalStale, previewProposalSelection, type Proposal } from '../../agent/proposal';
 import { ProposalCard } from './ProposalCard';
 import { ChatMessage } from './ChatMessage';
 import { ToolGroupRow } from './ToolGroupRow';
@@ -366,11 +367,39 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     }
   };
   const externalProposal = useExternalAgentBridge(ctx, projectId);
+  const [proposalPreviewOwner, setProposalPreviewOwner] = useState<'internal' | 'external' | null>(null);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<ChatMode>('agent');
   const [autoApply, setAutoApply] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [selectedRefs, setSelectedRefs] = useState<RefItem[]>([]);
+  const internalProposalVisible = !!proposal && (!autoApply || shouldBlockAutoApply(proposal, autoApply));
+  const internalProposalStale = !!proposal && (proposalStale || isProposalStale(proposal, ctx.getDoc()));
+  const externalProposalStale = !!externalProposal.proposal
+    && (externalProposal.proposalStale || isProposalStale(externalProposal.proposal, ctx.getDoc()));
+  const updateProposalPreview = (
+    owner: 'internal' | 'external',
+    target: Proposal,
+    selected: ReadonlySet<number> | null,
+  ): void => {
+    if (selected) {
+      setProposalPreviewOwner(owner);
+      onPreviewState(previewProposalSelection(target, selected));
+    } else if (proposalPreviewOwner === owner) {
+      setProposalPreviewOwner(null);
+      onPreviewState(null);
+    }
+  };
+  useEffect(() => {
+    const ownerGone = proposalPreviewOwner === 'internal'
+      ? !internalProposalVisible
+      : proposalPreviewOwner === 'external'
+        ? !externalProposal.proposal
+        : false;
+    if (!ownerGone) return;
+    setProposalPreviewOwner(null);
+    onPreviewState(null);
+  }, [externalProposal.proposal, internalProposalVisible, onPreviewState, proposalPreviewOwner]);
   // Restore composer draft / mode when switching projects (session continuity).
   useEffect(() => {
     setInput(loadComposerDraft(projectId));
@@ -430,9 +459,6 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed?.nonce]);
-
-  // clear any preview when the proposal is resolved (applied/rejected)
-  useEffect(() => { if (!proposal) onPreviewState(null); }, [proposal, onPreviewState]);
 
   // 设置·自动应用: when on, apply the proposal (all ops) as soon as it arrives.
   // skill_guard: high-cost tools still require the proposal card.
@@ -637,12 +663,16 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
             <ElapsedTimer />
           </div>
         )}
-        {proposal && (!autoApply || shouldBlockAutoApply(proposal, autoApply)) && (
+        {proposal && internalProposalVisible && (
           <ProposalCard proposal={proposal} onApply={applyProposal} onReject={rejectProposal}
-            stale={proposalStale} onForceApply={forceApplyProposal} onRePropose={reProposeStale}
-            onPreview={(on) => onPreviewState(on ? proposal.resultState : null)} />
+            stale={internalProposalStale} preview={proposalPreviewOwner === 'internal'}
+            onForceApply={forceApplyProposal} onRePropose={reProposeStale}
+            onPreview={(selected) => updateProposalPreview('internal', proposal, selected)} />
         )}
-        <ExternalProposalCard external={externalProposal} onPreviewState={onPreviewState} />
+        <ExternalProposalCard external={externalProposal} stale={externalProposalStale}
+          preview={proposalPreviewOwner === 'external'}
+          onPreview={(selected) => externalProposal.proposal
+            && updateProposalPreview('external', externalProposal.proposal, selected)} />
         {pendingGuard && (
           <div style={{ margin: '10px 0', padding: '10px 12px', border: `0.5px solid ${theme.border}`, borderRadius: 4, background: theme.panelAlt }}>
             <div style={{ fontSize: 12.5, color: theme.text, marginBottom: 8, lineHeight: 1.5 }}>

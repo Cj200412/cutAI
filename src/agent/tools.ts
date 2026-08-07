@@ -1,6 +1,6 @@
 import type { AgentToolSchema } from './tool-schema';
 import type { AgentContext } from './context';
-import { ASPECT_PRESETS, defaultTrackId, resolveTrackId, timelineTrackIds, trackAlias, trackKind, type AspectFit, type MediaAsset } from '../editor/types';
+import { ASPECT_PRESETS, resolveTrackId, timelineTrackIds, trackAlias, trackKind, type AspectFit, type MediaAsset } from '../editor/types';
 import { compileTemplate } from '../template-host';
 import { generateAgentText } from './client';
 import { designStyleHint } from './systemPrompt';
@@ -489,11 +489,13 @@ export async function executeTool(name: string, args: Args, ctx: AgentContext): 
       if (matches.length === 0) return { error: `no template matching "${args.templateName}"`, available: ctx.templates.map((t) => t.name) };
       const tpl = matches[0];
       const s = ctx.getState();
-      const track = resolveTrackId(s, args.track ?? 'V1', 'video') ?? defaultTrackId(s, 'video');
-      if (!track) return { error: 'no video track; create one with edit_track first' };
+      const requestedTrack = args.track == null ? undefined : args.track;
+      const track = requestedTrack === undefined ? undefined : resolveTrackId(s, requestedTrack, 'video');
+      if (requestedTrack !== undefined && !track) return { error: `no compatible video track ${String(requestedTrack)}` };
+      if (track && s.tracks?.[track]?.locked) return { error: `video track ${String(requestedTrack)} is locked` };
       const startFrame = typeof args.startFrame === 'number' ? args.startFrame : undefined;
-      ctx.commands.addMotionGraphic(tpl, { track, startFrame, ripple: args.ripple === true });
-      return { ok: true, added: tpl.name, trackId: track, track: trackAlias(ctx.getState(), track) };
+      const placedTrack = ctx.commands.addMotionGraphic(tpl, { track: track ?? undefined, startFrame, ripple: args.ripple === true });
+      return { ok: true, added: tpl.name, trackId: placedTrack, track: trackAlias(ctx.getState(), placedTrack) };
     }
     case 'update_item_props': {
       const it = findItem(ctx, args.itemId);

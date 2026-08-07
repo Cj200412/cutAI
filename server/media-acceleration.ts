@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { isGpuAccelerationDisabled } from './performance-budget.ts';
 
 export type H264Encoder =
   | 'h264_videotoolbox'
@@ -26,19 +27,28 @@ export function isHardwareH264Encoder(encoder: H264Encoder): boolean {
 }
 
 function disabledByEnvironment(): boolean {
-  return /^(?:1|true|yes)$/i.test(process.env.OPENCHATCUT_DISABLE_HARDWARE_ENCODING ?? '');
+  return isGpuAccelerationDisabled()
+    || /^(?:1|true|yes)$/i.test(process.env.OPENCHATCUT_DISABLE_HARDWARE_ENCODING ?? '');
+}
+
+/** Build a representative probe. AMF rejects tiny/low-rate inputs even when
+ * the encoder and driver are healthy, so use the smallest broadly valid clip. */
+export function h264EncoderProbeArgs(encoder: H264Encoder): string[] {
+  const pixelFormat = encoder === 'h264_qsv' || encoder === 'h264_amf' ? 'nv12' : 'yuv420p';
+  return [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'color=c=black:s=128x128:r=30',
+    '-frames:v', '1', '-an',
+    '-c:v', encoder, '-pix_fmt', pixelFormat,
+    '-f', 'null', '-',
+  ];
 }
 
 function probeEncoder(ffmpeg: string, encoder: H264Encoder): Promise<boolean> {
   return new Promise((resolve) => {
-    const pixelFormat = encoder === 'h264_qsv' || encoder === 'h264_amf' ? 'nv12' : 'yuv420p';
-    const child = spawn(ffmpeg, [
-      '-hide_banner', '-loglevel', 'error',
-      '-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=1',
-      '-frames:v', '1', '-an',
-      '-c:v', encoder, '-pix_fmt', pixelFormat,
-      '-f', 'null', '-',
-    ], { stdio: ['ignore', 'ignore', 'ignore'] });
+    const child = spawn(ffmpeg, h264EncoderProbeArgs(encoder), {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
     const timer = setTimeout(() => child.kill('SIGKILL'), 12_000);
     child.once('error', () => {
       clearTimeout(timer);
@@ -53,7 +63,7 @@ function probeEncoder(ffmpeg: string, encoder: H264Encoder): Promise<boolean> {
 
 /**
  * Encoder-list checks are insufficient on Windows because FFmpeg may contain
- * NVENC while the PC has no NVIDIA GPU. Encode one 64x64 frame once per process
+ * NVENC while the PC has no NVIDIA GPU. Encode one 128x128 frame once per process
  * and cache the working encoder; all failures fall back to libx264.
  */
 export function resolveH264Encoder(

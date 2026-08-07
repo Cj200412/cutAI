@@ -10,19 +10,53 @@ type PendingRequest = {
 export class SemanticClient {
   private worker: Worker | null = null;
   private requestId = 0;
+  private runtimeKey = '';
+  private runtimeDevice: SemanticDevice | null = null;
+  private runtimeCpuThreads = 1;
+  private onRuntimeDevice?: (device: SemanticDevice) => void;
+  private fallbackLoad: Promise<void> | null = null;
   private readonly pending = new Map<number, PendingRequest>();
 
-  load(device: SemanticDevice, onProgress?: ProgressListener): Promise<void> {
-    return this.request({ id: this.nextId(), type: 'load', device }, onProgress).then(() => undefined);
+  load(
+    device: SemanticDevice,
+    cpuThreads: number,
+    onProgress?: ProgressListener,
+    onRuntimeDevice?: (device: SemanticDevice) => void,
+  ): Promise<void> {
+    const runtimeKey = `${device}:${Math.max(1, Math.round(cpuThreads) || 1)}`;
+    if (this.runtimeKey && this.runtimeKey !== runtimeKey) this.cancel();
+    this.runtimeKey = runtimeKey;
+    this.runtimeDevice = device;
+    this.runtimeCpuThreads = Math.max(1, Math.round(cpuThreads) || 1);
+    this.onRuntimeDevice = onRuntimeDevice;
+    onRuntimeDevice?.(device);
+    return this.request({ id: this.nextId(), type: 'load', device, cpuThreads }, onProgress).then(() => undefined);
   }
 
-  embedText(text: string): Promise<number[]> {
-    return this.request({ id: this.nextId(), type: 'embed-text', text }).then(requireVector);
+  async embedText(text: string): Promise<number[]> {
+    try {
+      return await this.request({ id: this.nextId(), type: 'embed-text', text }).then(requireVector);
+    } catch (reason) {
+      await this.recoverWebGpuInference(reason);
+      return this.request({ id: this.nextId(), type: 'embed-text', text }).then(requireVector);
+    }
   }
 
-  embedImage(frame: FramePixels): Promise<number[]> {
-    const request: WorkerRequest = { id: this.nextId(), type: 'embed-image', frame };
-    return this.request(request, undefined, [frame.data.buffer as ArrayBuffer]).then(requireVector);
+  async embedImage(frame: FramePixels): Promise<number[]> {
+    // WebGPU can load successfully and still fail on the first unsupported
+    // operator. Preserve one copy because the first transfer detaches data.
+    const retryFrame = this.runtimeDevice === 'webgpu'
+      ? { ...frame, data: frame.data.slice() }
+      : null;
+    try {
+      const request: WorkerRequest = { id: this.nextId(), type: 'embed-image', frame };
+      return await this.request(request, undefined, [frame.data.buffer as ArrayBuffer]).then(requireVector);
+    } catch (reason) {
+      await this.recoverWebGpuInference(reason);
+      if (!retryFrame) throw reason;
+      const request: WorkerRequest = { id: this.nextId(), type: 'embed-image', frame: retryFrame };
+      return this.request(request, undefined, [retryFrame.data.buffer as ArrayBuffer]).then(requireVector);
+    }
   }
 
   cancel(): void {
@@ -31,6 +65,22 @@ export class SemanticClient {
     const error = new DOMException('Semantic indexing canceled', 'AbortError');
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+    this.runtimeKey = '';
+    this.runtimeDevice = null;
+    this.onRuntimeDevice = undefined;
+  }
+
+  private async recoverWebGpuInference(reason: unknown): Promise<void> {
+    if (reason instanceof DOMException && reason.name === 'AbortError') throw reason;
+    if (this.runtimeDevice !== 'webgpu') throw reason;
+    if (!this.fallbackLoad) {
+      const cpuThreads = this.runtimeCpuThreads;
+      const onRuntimeDevice = this.onRuntimeDevice;
+      this.cancel();
+      this.fallbackLoad = this.load('wasm', cpuThreads, undefined, onRuntimeDevice)
+        .finally(() => { this.fallbackLoad = null; });
+    }
+    await this.fallbackLoad;
   }
 
   private nextId(): number {

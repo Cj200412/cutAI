@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import type { TimelineState } from '../editor/types';
 import {
+  browserCpuThrottleDelay,
   browserScaledExportDimensions,
   browserTimelineBlocker,
   exportVideoWithFallback,
   renderTimelineInBrowser,
+  resolveBrowserExportPerformance,
 } from './browserExport';
 
 const state: TimelineState = {
@@ -33,6 +35,18 @@ assert.deepEqual(browserScaledExportDimensions({ width: 1080, height: 1920 }, '4
   height: 854,
   scale: 480 / 1080,
 });
+assert.deepEqual(resolveBrowserExportPerformance({ cpuPercent: 35, gpuMode: 'off' }), {
+  cpuPercent: 35,
+  hardwareAcceleration: 'prefer-software',
+  pageResponsiveness: 'high',
+});
+assert.deepEqual(resolveBrowserExportPerformance({ cpuPercent: 85, gpuMode: 'auto' }), {
+  cpuPercent: 85,
+  hardwareAcceleration: 'prefer-hardware',
+  pageResponsiveness: 'low',
+});
+assert.equal(Math.round(browserCpuThrottleDelay(60, 60)), 40);
+assert.equal(browserCpuThrottleDelay(-10, 60), 0);
 
 let loaderCalls = 0;
 const retimed = await renderTimelineInBrowser({
@@ -47,6 +61,21 @@ const retimed = await renderTimelineInBrowser({
 });
 assert.equal(retimed.status, 'unsupported');
 assert.equal(loaderCalls, 0, 'frame-rate mismatch must not load the browser renderer');
+
+const gpuDisabled = await renderTimelineInBrowser({
+  state,
+  codec: 'h264',
+  resolution: '1080p',
+  fps: 30,
+  performanceSettings: { cpuPercent: 60, gpuMode: 'off' },
+  loadRenderer: async () => {
+    loaderCalls += 1;
+    return {} as never;
+  },
+});
+assert.equal(gpuDisabled.status, 'unsupported');
+assert.match(gpuDisabled.status === 'unsupported' ? gpuDisabled.reason : '', /服务端导出/);
+assert.equal(loaderCalls, 0, 'GPU-off browser export must fall back before loading web-renderer');
 
 assert.equal(browserTimelineBlocker({
   ...state,
@@ -99,6 +128,7 @@ const rendered = await renderTimelineInBrowser({
   resolution: '720p',
   fps: 30,
   onProgress: (progress) => progressSnapshots.push(progress.progress),
+  performanceSettings: { cpuPercent: 35, gpuMode: 'auto' },
   loadRenderer: async () => runtime as never,
   loadComposition,
 });
@@ -116,6 +146,9 @@ assert.deepEqual(capabilityCalls[0], {
 });
 assert.equal(renderCalls[0].container, 'mp4');
 assert.equal(renderCalls[0].scale, 720 / 1080);
+assert.equal(renderCalls[0].hardwareAcceleration, 'prefer-hardware');
+assert.equal(renderCalls[0].pageResponsiveness, 'high');
+assert.equal(typeof renderCalls[0].onFrame, 'function');
 assert.equal((renderCalls[0].inputProps as { browserRenderer: boolean }).browserRenderer, true);
 
 await renderTimelineInBrowser({

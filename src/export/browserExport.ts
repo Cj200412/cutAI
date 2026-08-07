@@ -1,5 +1,13 @@
-import type { RenderMediaOnWebProgress } from '@remotion/web-renderer';
+import type {
+  RenderMediaOnWebProgress,
+  WebRendererHardwareAcceleration,
+  WebRendererPageResponsiveness,
+} from '@remotion/web-renderer';
 import type { ComponentType } from 'react';
+import {
+  normalizeGpuAccelerationMode,
+  resolvePerformanceCpuPercent,
+} from '../../shared/performance-settings';
 import type { TimelineCompositionProps } from '../editor/TimelineComposition';
 import { GLSL_TRANSITION_TYPES, isAudioTransition, isRasterMediaKind, timelineDuration, type TimelineState } from '../editor/types';
 import { scaledExportDimensions, type ExportResolution } from './mediaSettings';
@@ -8,6 +16,17 @@ export type BrowserVideoCodec = 'h264' | 'vp8';
 
 type WebRendererModule = Pick<typeof import('@remotion/web-renderer'), 'canRenderMediaOnWeb' | 'renderMediaOnWeb'>;
 
+export interface BrowserPerformanceSettings {
+  cpuPercent?: unknown;
+  gpuMode?: unknown;
+}
+
+export interface BrowserExportPerformance {
+  cpuPercent: number;
+  hardwareAcceleration: WebRendererHardwareAcceleration;
+  pageResponsiveness: WebRendererPageResponsiveness;
+}
+
 export interface BrowserExportOptions {
   state: TimelineState;
   codec: BrowserVideoCodec;
@@ -15,6 +34,8 @@ export interface BrowserExportOptions {
   fps: number;
   signal?: AbortSignal;
   onProgress?: (progress: RenderMediaOnWebProgress) => void;
+  performanceSettings?: BrowserPerformanceSettings;
+  loadPerformanceSettings?: () => Promise<BrowserPerformanceSettings>;
   loadRenderer?: () => Promise<WebRendererModule>;
   loadComposition?: () => Promise<{ TimelineComposition: ComponentType<TimelineCompositionProps> }>;
 }
@@ -29,6 +50,48 @@ export type VideoExportWithFallback<T> =
 
 function abortError(): DOMException {
   return new DOMException('Browser export cancelled', 'AbortError');
+}
+
+async function loadSavedPerformanceSettings(): Promise<BrowserPerformanceSettings> {
+  try {
+    const response = await fetch('/api/keys', { cache: 'no-store' });
+    if (!response.ok) return {};
+    const status = await response.json() as { models?: Record<string, string> };
+    return {
+      cpuPercent: status.models?.PERFORMANCE_CPU_PERCENT,
+      gpuMode: status.models?.PERFORMANCE_GPU_ACCELERATION,
+    };
+  } catch {
+    // Browser-only checks and an unavailable settings endpoint use conservative
+    // shared defaults instead of preventing export.
+    return {};
+  }
+}
+
+/** Convert the saved global budget into web-renderer controls. */
+export function resolveBrowserExportPerformance(
+  settings: BrowserPerformanceSettings = {},
+): BrowserExportPerformance {
+  const cpuPercent = resolvePerformanceCpuPercent(settings.cpuPercent);
+  return {
+    cpuPercent,
+    hardwareAcceleration: normalizeGpuAccelerationMode(settings.gpuMode) === 'off'
+      ? 'prefer-software'
+      : 'prefer-hardware',
+    // Lower budgets yield back to the editor more frequently.
+    pageResponsiveness: cpuPercent <= 50 ? 'high' : cpuPercent <= 70 ? 'medium' : 'low',
+  };
+}
+
+/**
+ * Approximate a CPU duty-cycle ceiling for browser rendering. WebCodecs has no
+ * thread-count option, so each completed frame yields in proportion to the
+ * measured active work since the previous frame.
+ */
+export function browserCpuThrottleDelay(activeMilliseconds: unknown, cpuPercent: unknown): number {
+  const active = Math.max(0, Math.min(250, Number(activeMilliseconds) || 0));
+  const budget = resolvePerformanceCpuPercent(cpuPercent);
+  return Math.max(0, Math.min(250, active * (100 - budget) / budget));
 }
 
 export function isAbortError(error: unknown): boolean {
@@ -118,6 +181,13 @@ export async function renderTimelineInBrowser(options: BrowserExportOptions): Pr
   const { width, height, scale } = browserScaledExportDimensions(state, resolution);
   const container = codec === 'h264' ? 'mp4' : 'webm';
   const audioCodec = codec === 'h264' ? 'aac' : 'opus';
+  const rawPerformance = options.performanceSettings
+    ?? await (options.loadPerformanceSettings ?? loadSavedPerformanceSettings)();
+  const exportPerformance = resolveBrowserExportPerformance(rawPerformance);
+  if (exportPerformance.hardwareAcceleration === 'prefer-software') {
+    const reason = '已关闭显卡加速，改用受 CPU 阈值控制的服务端导出';
+    return { status: 'unsupported', reason, issues: [reason] };
+  }
   const renderer = await (options.loadRenderer ?? (() => import('@remotion/web-renderer')))();
   if (signal?.aborted) throw abortError();
 
@@ -144,6 +214,7 @@ export async function renderTimelineInBrowser(options: BrowserExportOptions): Pr
   try {
     const { TimelineComposition } = await (options.loadComposition ?? (() => import('../editor/TimelineComposition')))();
     if (signal?.aborted) throw abortError();
+    let activeStartedAt = performance.now();
     const result = await renderer.renderMediaOnWeb({
       composition: {
         id: 'openchatcut-timeline-browser',
@@ -161,8 +232,14 @@ export async function renderTimelineInBrowser(options: BrowserExportOptions): Pr
       scale,
       signal,
       onProgress,
-      hardwareAcceleration: 'prefer-hardware',
-      pageResponsiveness: 'medium',
+      hardwareAcceleration: exportPerformance.hardwareAcceleration,
+      pageResponsiveness: exportPerformance.pageResponsiveness,
+      onFrame: async (frame) => {
+        const delay = browserCpuThrottleDelay(performance.now() - activeStartedAt, exportPerformance.cpuPercent);
+        if (delay >= 1) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        activeStartedAt = performance.now();
+        return frame;
+      },
       videoBitrate: 'high',
       audioBitrate: 'high',
       transparent: false,

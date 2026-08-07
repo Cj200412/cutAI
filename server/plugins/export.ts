@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readFile, unlink, mkdir, rename, stat } from 'node:fs/promises';
 import { normalizeFrameRange } from '../../src/export/range.ts';
-import { resolveH264TargetBitrate } from '../media-acceleration.ts';
+import { resolveH264Encoder, resolveH264TargetBitrate, type H264Encoder } from '../media-acceleration.ts';
+import { ffmpegBin } from '../media-binaries.ts';
 import {
   EXPORT_MEDIA,
   exportDuration,
@@ -34,9 +35,12 @@ import {
   type UpdateGenerationJob,
 } from './generation-jobs.ts';
 // @ts-expect-error — plain .mjs render pipeline has no .d.ts
-import { renderTimeline, renderTimelineStills, renderClip, setUploadsDirProvider } from '../../remotion/render.mjs';
+import { renderTimeline, renderTimelineStills, renderClip, setPerformanceSettingsProvider, setUploadsDirProvider } from '../../remotion/render.mjs';
 
+import { normalizeGpuAccelerationMode, resolvePerformanceCpuPercent } from '../../shared/performance-settings.ts';
+import { getKey } from '../keystore.ts';
 import { uploadDir } from '../media-dir.ts';
+import { withHeavyTaskPermit } from '../performance-budget.ts';
 import { sanitizeFileName } from '../file-name.ts';
 import { formatFrameLabel, tileContactSheet } from '../frame-grid.ts';
 
@@ -141,8 +145,17 @@ export function exportPlugin(): Plugin {
   return {
     name: 'openchatcut-export',
     configureServer(server) {
+      let remotionEncoder: H264Encoder = 'libx264';
+      void resolveH264Encoder(ffmpegBin()).then((encoder) => { remotionEncoder = encoder; }).catch((error) => {
+        server.config.logger.warn(`[export] hardware encoder probe failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
       // 渲染 bundle 的 /media/uploads symlink 跟随 MEDIA_DIR(自定义素材目录也能渲染)
       setUploadsDirProvider(uploadDir);
+      setPerformanceSettingsProvider(() => ({
+        cpuPercent: resolvePerformanceCpuPercent(getKey('PERFORMANCE_CPU_PERCENT')),
+        gpuMode: normalizeGpuAccelerationMode(getKey('PERFORMANCE_GPU_ACCELERATION')),
+        h264Encoder: remotionEncoder,
+      }));
       const cleanStaleExports = () => cleanupStaleExportFiles(uploadDir(), {
           onError: (path, error) => server.config.logger.warn(
             `[export] failed to clean stale artifact ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -183,7 +196,9 @@ export function exportPlugin(): Plugin {
             sendError(res, 400, 'frames must be a non-empty number[]');
             return;
           }
-          const rendered = await renderTimelineStills({ state, frames }) as Array<{ frame: number; base64: string }>;
+          const rendered = await withExportPermit(
+            () => renderTimelineStills({ state, frames }),
+          ) as Array<{ frame: number; base64: string }>;
           const fps = typeof body?.fps === 'number' && body.fps > 0
             ? body.fps
             : Number((state as { fps?: unknown }).fps) || 30;
@@ -191,13 +206,13 @@ export function exportPlugin(): Plugin {
           let gridBase64: string | undefined;
           if (wantGrid) {
             try {
-              const sheet = await tileContactSheet(
+              const sheet = await withHeavyTaskPermit(() => tileContactSheet(
                 rendered.map((r) => ({
                   jpeg: Buffer.from(r.base64, 'base64'),
                   label: formatFrameLabel(r.frame, fps),
                 })),
                 { cellWidth: rendered.length > 9 ? 280 : 320 },
-              );
+              ));
               gridBase64 = sheet.toString('base64');
             } catch (gridErr) {
               server.config.logger.info(

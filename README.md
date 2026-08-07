@@ -207,7 +207,7 @@ http://localhost:5199
 
 Only add the model or media-service credentials you actually use to `.env.local`. Features without configured third-party credentials report the missing key explicitly; local timeline editing, built-in media, and other configured capabilities continue to work.
 
-Local H.264 exports automatically prefer VideoToolbox on macOS and NVENC on compatible Windows systems, then fall back to software encoding. Tune render concurrency and the heavy-export limit with `OPENCHATCUT_RENDER_CONCURRENCY` and `OPENCHATCUT_MAX_ACTIVE_EXPORTS`, disable hardware encoding with `OPENCHATCUT_DISABLE_HARDWARE_ENCODING`, or override FFmpeg-side encoder selection with `OPENCHATCUT_H264_ENCODER`; see [`.env.example`](.env.example).
+Use **Settings → Enhanced Tools → Performance & Hardware** to cap each local heavy task's CPU budget, control background media-job concurrency, and enable automatic GPU acceleration. New work defaults to 60% of logical CPU cores; server-side FFmpeg, media-analysis, and rendering jobs run one at a time, while in-browser local transcription and semantic indexing are each serialized. Supported jobs probe VideoToolbox, NVENC, QSV, or AMF and fall back to software safely. Advanced environment overrides remain documented in [`.env.example`](.env.example).
 
 ### Desktop development
 
