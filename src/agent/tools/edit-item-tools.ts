@@ -9,7 +9,8 @@ import {
   transitionAssetId,
 } from './library-catalog';
 import { SOUND_EFFECTS, soundEffectSrc } from '../../audio/soundLibrary';
-import { GENERIC_ITEM_KINDS, GENERIC_ADD_KINDS, validateGenericAdd, validateGenericUpdate, validateGenericDelete, applyGeneric } from './edit-item-generic';
+import { GENERIC_ITEM_KINDS, GENERIC_ADD_KINDS, validateGenericAdd, validateGenericUpdate, validateGenericDelete, applyGeneric, genericAddPlacement } from './edit-item-generic';
+import { rippleBatchInsertionConflict } from './edit-item-ripple';
 import { getCustomTransition, customTransitionUniforms } from '../../gl/customTransitions';
 import { getCustomZoom, zoomFromCustomDef } from '../../editor/customZooms';
 
@@ -56,7 +57,7 @@ export const EDIT_ITEM_TOOL_SCHEMAS: AgentToolSchema[] = [
         ripple: {
           type: 'boolean',
           description:
-            'When true, MG/audio adds push later same-track items (insert). Do not combine with validateOnly.',
+            'When true, MG/audio/pool-media adds push later same-track items (insert). The insertion frame must be an existing clip boundary; split a clip before inserting inside it. Do not combine with validateOnly.',
         },
         validateOnly: {
           type: 'boolean',
@@ -310,7 +311,7 @@ function validateMgAdd(ctx: AgentContext, entry: Record<string, unknown>): OpRes
   return planMg(ctx, tpl, entry);
 }
 
-function planMg(ctx: AgentContext, tpl: { id: string; name: string }, entry: Record<string, unknown>): OpResult {
+function planMg(ctx: AgentContext, tpl: { id: string; name: string; durationInFrames: number }, entry: Record<string, unknown>): OpResult {
   const s = ctx.getState();
   const requestedTrack = entry.track ?? entry.trackId;
   const track = requestedTrack === undefined ? undefined : resolveTrackId(s, requestedTrack, 'video');
@@ -326,6 +327,7 @@ function planMg(ctx: AgentContext, tpl: { id: string; name: string }, entry: Rec
     plan: 'addMg',
     templateId: tpl.id,
     name: tpl.name,
+    durationInFrames: tpl.durationInFrames,
     ...(track ? { track } : {}),
     startFrame: typeof entry.startFrame === 'number' ? entry.startFrame : undefined,
   };
@@ -558,10 +560,7 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
       const placed = typeof plan.durationInFrames === 'number'
         ? { ...asset, durationInFrames: Number(plan.durationInFrames) }
         : asset;
-      const itemId = ctx.commands.addMediaItem(placed, {
-        track: typeof plan.track === 'string' ? plan.track : undefined,
-        startFrame: plan.startFrame as number | undefined,
-      });
+      const itemId = ctx.commands.addMediaItem(placed, genericAddPlacement(plan, ripple));
       const placedItem = ctx.getState().items.find((item) => item.id === itemId);
       return {
         ok: true,
@@ -574,6 +573,7 @@ function commitPlan(ctx: AgentContext, plan: OpResult, ripple = false): OpResult
           track: placedItem?.track ?? plan.track,
           startFrame: plan.startFrame ?? 'appended',
           durationInFrames: placed.durationInFrames,
+          ripple,
         },
       };
     }
@@ -633,6 +633,18 @@ export async function execEditItemTool(name: string, args: Args, ctx: AgentConte
     else {
       const r = validateDelete(ctx, raw as Record<string, unknown>);
       plans.push(r.error ? { ...r, error: pathOf('deletes', i, String(r.error)) } : r);
+    }
+  }
+
+  if (!plans.some((plan) => plan.error)) {
+    const batchConflict = rippleBatchInsertionConflict(ctx.getState(), plans, ripple);
+    if (batchConflict) {
+      const plan = plans[batchConflict.planIndex]!;
+      plans[batchConflict.planIndex] = {
+        ...plan,
+        ok: false,
+        error: pathOf('adds', batchConflict.planIndex, batchConflict.error),
+      };
     }
   }
 

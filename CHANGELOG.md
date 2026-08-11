@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added / 新增
 
+- Added same-kind timeline track header dragging with an insertion guide, plus a documented, rollback-safe migration path toward an MLT/`melt` CLI backend.
+  时间线轨道头新增同类型上下拖动与插入指示线，并补充了可回滚的 MLT/`melt` CLI 后端渐进迁移方案。
+- Connected desktop Claude/Codex CLI Agent sessions to the project-scoped CutAI MCP bridge using short-lived workspace tokens and an environment-variable allowlist.
+  桌面 Claude/Codex CLI Agent 现通过项目级短期令牌连接 CutAI MCP，并仅继承白名单环境变量。
 - Added shared local performance controls for per-task CPU budgets, server background-media concurrency, serialized browser-side model work, and automatic GPU acceleration across supported transcription, analysis, transcoding, and rendering paths.
   新增统一的本机性能设置，可限制单任务 CPU、控制服务端后台媒体任务并发、串行浏览器侧模型任务，并为支持的转写、分析、转码与渲染路径自动启用可用的显卡加速。
 - Added explicit AI tool-result states and allowlisted media previews, plus selection-accurate proposal previews so failed or unchecked output is no longer shown as completed work.
@@ -27,6 +31,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed / 修复
 
+- Fixed manual clip drags creating accidental same-track overlaps, first-time legacy MG lane promotion leaving overlays below main video, and Agent pool-media inserts dropping ripple or inserting inside an existing clip.
+  修复手工拖动片段意外产生同轨重叠、旧 MG 轨首次升级后仍位于主视频下方，以及 Agent 素材池插入丢失波纹参数或落在既有片段内部的问题。
 - Fixed Local Whisper silently treating recognized text without timestamps as an empty successful transcript, overlapping missing-timestamp chunks, and ignoring punctuation boundaries inside an adaptive window. Local decoding and inference now share one bounded queue, GPU-off is respected, and automatic WebGPU inference failures retry once on WASM.
   修复本地 Whisper 把“有文字但无时间戳”静默当作空转写、缺失时间戳片段彼此重叠，以及扩窗时忽略中间标点的问题；本地解码与推理现共用受限队列，关闭显卡会强制使用 WASM，WebGPU 推理失败会自动回退一次。
 - Fixed browser quick export and semantic media search bypassing the saved CPU/GPU policy. Browser rendering now yields according to the CPU threshold, GPU-off exports use the bounded server path, and semantic indexing receives the same WASM thread cap and GPU choice.

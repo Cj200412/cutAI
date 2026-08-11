@@ -256,6 +256,9 @@ export function validateGenericAdd(
 
   const startFrame = finiteNum(entry.startFrame) ?? finiteNum(entry.fromFrame);
   const durationInFrames = finiteNum(entry.durationInFrames);
+  const placedDuration = durationInFrames !== undefined && durationInFrames > 0
+    ? Math.round(durationInFrames)
+    : asset.durationInFrames;
   return {
     ok: true,
     kind: type,
@@ -263,7 +266,19 @@ export function validateGenericAdd(
     assetId: asset.id,
     ...(track ? { track } : {}),
     ...(startFrame !== undefined ? { startFrame: Math.max(0, Math.round(startFrame)) } : {}),
-    ...(durationInFrames !== undefined && durationInFrames > 0 ? { durationInFrames: Math.round(durationInFrames) } : {}),
+    durationInFrames: placedDuration,
+  };
+}
+
+/** Keep pool-media placement options on the same path as MG/SFX adds. */
+export function genericAddPlacement(
+  plan: OpResult,
+  ripple: boolean,
+): { track?: string; startFrame?: number; ripple: boolean } {
+  return {
+    track: typeof plan.track === 'string' ? plan.track : undefined,
+    startFrame: typeof plan.startFrame === 'number' ? plan.startFrame : undefined,
+    ripple,
   };
 }
 

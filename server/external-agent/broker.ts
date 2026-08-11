@@ -106,7 +106,8 @@ export function editorStatuses(): Array<{
   }));
 }
 
-export function registeredTools(): ExternalToolSchema[] {
+export function registeredTools(projectId?: string): ExternalToolSchema[] {
+  if (projectId) return editors.get(projectId)?.tools ?? [];
   const first = editors.values().next().value as EditorRegistration | undefined;
   return first?.tools ?? [];
 }

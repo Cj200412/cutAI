@@ -184,6 +184,31 @@ const ordinaryVideoAsset = (): MediaAsset => ({
   assert.equal(draft.getState().tracks?.visual_top?.name, MOTION_GRAPHIC_TRACK_NAME);
 }
 
+// A legacy unnamed MG lane below ordinary video is promoted above it exactly
+// once. A later user reorder of the now-named lane must remain authoritative.
+{
+  const state = stateWith([
+    video('main', 'visual_top'),
+    {
+      id: 'legacy_bottom_mg',
+      track: 'visual_main',
+      startFrame: 0,
+      durationInFrames: 30,
+      name: 'Legacy bottom MG',
+      kind: 'motion-graphic',
+      code: tpl.code,
+    },
+  ]);
+  const draft = makeDraft(docFromTimeline(state));
+  const track = draft.commands.addMotionGraphic(tpl);
+  assert.equal(track, 'visual_main');
+  assert.equal(timelineTrackIds(draft.getState())[0], 'visual_main', 'first MG upgrade moves the overlay above main video');
+  draft.commands.updateTrack(track, { order: 0 });
+  assert.equal(timelineTrackIds(draft.getState()).at(-1), track, 'user can move the named MG lane back down');
+  draft.commands.addMotionGraphic(tpl);
+  assert.equal(timelineTrackIds(draft.getState()).at(-1), track, 'later MG adds do not override the user order');
+}
+
 // Generic edit_item validation leaves an omitted MG track unresolved so the
 // central store selector can choose the named lane; explicit targets stay exact.
 {

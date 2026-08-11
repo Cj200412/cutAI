@@ -13,6 +13,8 @@ import {
 
 const ffmpegStatic = createRequire(import.meta.url)('ffmpeg-static') as string | null;
 import { CUTAI_AGENT_SYSTEM_PROMPT, ensureCutaiAgentGuides } from './cli-agent-guidance.ts';
+import { cliAgentRuntimeEnv } from './cli-agent-env.ts';
+import { claudeMcpServers, codexMcpConfig, type CliAgentMcpContext } from './cli-agent-mcp.ts';
 import type {
   CliAgentProfile,
   CliRunRequest,
@@ -80,19 +82,23 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? value as Record<string, unknown> : null;
 }
 
-function claudeInstruction(request: CliRunRequest): string {
+function cliInstruction(request: CliRunRequest, mcpEnabled: boolean): string {
   const directEdit = request.fileAccess === 'workspace-write' && request.planMode !== true;
   const mode = request.planMode
-    ? 'Plan mode is enabled: inspect and explain the proposed changes first; do not write files or modify the project until the user confirms.'
+    ? 'Plan mode is enabled: inspect with read-only filesystem or CutAI MCP tools and explain the proposed changes first; do not write files or start/apply an edit session until the user confirms.'
     : directEdit
     ? [
         'The user enabled direct workspace editing.',
-        'Use Claude Code built-in file tools only inside the project root; do not use MCP or ChatCut tools.',
-        'The live CutAI document is .cutai/project.json. For timeline or project edits, update that file and keep it valid JSON; CutAI will validate and synchronize it into the open editor after this turn.',
+        'Use built-in file tools only for ordinary project files inside the project root.',
+        mcpEnabled
+          ? 'For timeline, caption, track, preview, or project edits, use the CutAI MCP tools so the open editor receives a reviewable, undoable edit session; do not write .cutai/project.json directly.'
+          : 'The CutAI MCP bridge is unavailable in this host session. Do not claim a live timeline edit; report that the desktop editor bridge must be running.',
         'Do not read .cutai/sessions, .cutai/audit, project.json.bak, or unrelated history to infer the requested edit.',
         'Never modify source media or access paths outside the project root.',
       ].join(' ')
-    : 'Use native SDK tools with read-only project access. Do not modify .cutai files, source media, or other project files.';
+    : mcpEnabled
+      ? 'Filesystem access is read-only. For timeline or project changes, use CutAI MCP, begin a manual edit session, submit the complete draft for review, and do not claim success before the editor reports applied.'
+      : 'Use native SDK tools with read-only project access. The CutAI MCP bridge is unavailable, so do not claim timeline edits; do not modify .cutai files, source media, or other project files.';
   return `${request.prompt}\n\nCutAI project id: ${request.projectId}. ${mode}`;
 }
 
@@ -125,12 +131,14 @@ export async function runCodexSdk(
   runId: string,
   controller: AbortController,
   onEvent?: (event: CliStreamEvent) => void,
+  mcp?: CliAgentMcpContext,
 ): Promise<CliRunResult> {
   const emit: Emit = (event) => onEvent?.({ runId, ...event });
   const visualEvidence = await prepareVisualEvidence(request.projectRoot);
   const codex = new Codex({
     codexPathOverride: profile.executable,
-    env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+    env: cliAgentRuntimeEnv(profile.kind) as Record<string, string>,
+    ...(mcp ? { config: codexMcpConfig(mcp) } : {}),
   });
   const threadOptions = {
     workingDirectory: request.projectRoot,
@@ -150,7 +158,7 @@ export async function runCodexSdk(
   let usage: Record<string, unknown> | undefined;
   let sessionId = request.sessionId;
   emit({ type: 'status', message: `${profile.name} SDK 已启动，正在建立原生流式会话…` });
-  const { events } = await thread.runStreamed(`${claudeInstruction(request)}${visualEvidence ? `\n\nA local source preview is available at ${visualEvidence}; inspect it before making visual claims.` : ''}`, { signal: controller.signal });
+  const { events } = await thread.runStreamed(`${cliInstruction(request, !!mcp)}${visualEvidence ? `\n\nA local source preview is available at ${visualEvidence}; inspect it before making visual claims.` : ''}`, { signal: controller.signal });
   for await (const event of events) {
     if (event.type === 'thread.started') {
       sessionId = event.thread_id;
@@ -192,6 +200,7 @@ export async function runClaudeSdk(
   runId: string,
   controller: AbortController,
   onEvent?: (event: CliStreamEvent) => void,
+  mcp?: CliAgentMcpContext,
 ): Promise<CliRunResult> {
   await ensureCutaiAgentGuides(request.projectRoot);
   const visualEvidence = await prepareVisualEvidence(request.projectRoot);
@@ -206,7 +215,7 @@ export async function runClaudeSdk(
   let actualModel: string | undefined;
   emit({ type: 'status', message: `${profile.name} Agent SDK 已启动，正在建立原生流式会话…` });
   const batcher = new StreamEventBatcher(emit);
-  const promptText = `${claudeInstruction(request)}${visualEvidence ? `\n\nA local source preview was extracted for visual inspection at ${visualEvidence}. Read that image before making visual claims.` : ''}`;
+  const promptText = `${cliInstruction(request, !!mcp)}${visualEvidence ? `\n\nA local source preview was extracted for visual inspection at ${visualEvidence}. Read that image before making visual claims.` : ''}`;
   const stream = query({
     prompt: promptText,
     options: {
@@ -218,7 +227,9 @@ export async function runClaudeSdk(
       // and local settings. strictMcpConfig below still blocks every inherited MCP.
       settingSources: ['user'],
       strictMcpConfig: true,
-      mcpServers: {},
+      mcpServers: mcp ? claudeMcpServers(mcp) : {},
+      ...(mcp ? { allowedTools: ['mcp__cutai__*'] } : {}),
+      env: cliAgentRuntimeEnv(profile.kind),
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',

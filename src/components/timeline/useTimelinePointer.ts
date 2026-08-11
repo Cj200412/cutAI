@@ -8,6 +8,7 @@ import {
   type KeyframeEasing, type KeyframeProp, type TimelineItem, type TimelineState, type TrackId,
 } from '../../editor/types';
 import { groupMoveIds, moveItemsByDelta } from '../../editor/multiSelect';
+import { closestLegalMoveDelta, legalMoveTrackShift } from '../../editor/trackPlacement';
 import { upsertKeyframe } from '../../editor/keyframes';
 import { getKeyframePropertyDefinition } from '../../editor/keyframeRegistry';
 import { rateStretchItem } from '../../editor/rateStretch';
@@ -157,9 +158,30 @@ export function useTimelinePointer(deps: PointerDeps) {
     const snapped = applySnap(drag.mode, drag.baseStart, drag.baseDur, rawDelta);
     // 拖到素材尾部就停住,预览与最终提交用同一个上界(否则松手会突然弹回来)。
     const cap = drag.mode === 'trim-right' ? trimRightCap(drag.id, drag.baseDur) : Infinity;
-    const deltaF = Math.min(snapped.deltaF, cap);
+    let deltaF = Math.min(snapped.deltaF, cap);
+    let targetTrack = drag.baseTrack;
+    if (drag.mode === 'move') {
+      const requestedTrack = trackFromClientY(e.clientY);
+      const canChangeTrack = !!requestedTrack
+        && trackKind(state, requestedTrack) === trackKind(state, drag.baseTrack)
+        && !state.tracks?.[requestedTrack]?.locked;
+      targetTrack = canChangeTrack ? requestedTrack : drag.baseTrack;
+      const ids = groupMoveIds(state, drag.id);
+      const trackShift = legalMoveTrackShift(
+        state,
+        ids,
+        targetTrack !== drag.baseTrack ? { from: drag.baseTrack, to: targetTrack } : null,
+      );
+      targetTrack = trackShift?.to ?? drag.baseTrack;
+      deltaF = closestLegalMoveDelta(
+        state,
+        ids,
+        deltaF,
+        trackShift,
+      );
+    }
     const snapAt = deltaF === snapped.deltaF ? snapped.snapAt : null;
-    const targetTrack = drag.mode === 'move' ? trackFromClientY(e.clientY) : drag.baseTrack;
+    if (snapAt === null && snapped.snapAt !== null) snapHold.current = null;
     setDrag((d) => (d ? { ...d, deltaF, targetTrack, snapAt } : d));
   };
   const onPointerUp = () => {
@@ -272,5 +294,18 @@ export function useTimelinePointer(deps: PointerDeps) {
     setDrag(null);
   };
 
-  return { drag, penDrag, setPenDrag, marquee, pickDrag, startDrag, startPick, startMarquee, onPointerMove, onPointerUp };
+  /** Device/browser cancellation must discard the preview, never commit it. */
+  const onPointerCancel = () => {
+    snapHold.current = null;
+    setDrag(null);
+    setPenDrag(null);
+    setMarquee(null);
+    setPickDrag(null);
+  };
+
+  return {
+    drag, penDrag, setPenDrag, marquee, pickDrag,
+    startDrag, startPick, startMarquee,
+    onPointerMove, onPointerUp, onPointerCancel,
+  };
 }

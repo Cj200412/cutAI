@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CliAgentHost } from './cli-agent.ts';
+import { registerWorkspaceRoot } from './workspace-project.ts';
 
 const projectRoot = process.env.CUTAI_CLAUDE_TEST_PROJECT;
 assert.ok(projectRoot, 'CUTAI_CLAUDE_TEST_PROJECT is required');
 const appData = process.env.APPDATA;
 assert.ok(appData, 'APPDATA is required');
+registerWorkspaceRoot('claude-sdk-stability', projectRoot);
 
 const host = new CliAgentHost(join(appData, 'CutAI'));
 const profile = (await host.profiles()).find((item) => item.kind === 'claude' && item.compatible);

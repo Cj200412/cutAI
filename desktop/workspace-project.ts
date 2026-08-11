@@ -58,7 +58,15 @@ export interface OpenWorkspaceResult<T> {
 }
 
 const roots = new Map<string, string>();
-const cliTokens = new Map<string, { projectId: string; expiresAt: number }>();
+export type WorkspaceCliMcpMode = 'read-only' | 'manual-edit';
+
+interface WorkspaceCliGrant {
+  projectId: string;
+  expiresAt: number;
+  mcpMode: WorkspaceCliMcpMode;
+}
+
+const cliTokens = new Map<string, WorkspaceCliGrant>();
 
 function metadataRoot(rootPath: string): string {
   return join(rootPath, META_DIR);
@@ -156,14 +164,43 @@ export function registerWorkspaceRoot(projectId: string, rootPath: string): void
   roots.set(projectId, validateRoot(rootPath));
 }
 
-export function issueWorkspaceCliToken(projectId: string, ttlMs = 15 * 60 * 1000): string {
+export function workspaceProjectMatchesRoot(projectId: string, rootPath: string): boolean {
+  const registered = roots.get(projectId);
+  return !!registered && relative(registered, validateRoot(rootPath)) === '';
+}
+
+export function issueWorkspaceCliToken(
+  projectId: string,
+  options: { ttlMs?: number; mcpMode?: WorkspaceCliMcpMode } = {},
+): string {
   if (!roots.has(projectId)) throw new Error('Workspace is not open');
   const token = randomUUID();
-  cliTokens.set(token, { projectId, expiresAt: Date.now() + ttlMs });
+  cliTokens.set(token, {
+    projectId,
+    expiresAt: Date.now() + (options.ttlMs ?? 15 * 60 * 1000),
+    mcpMode: options.mcpMode ?? 'manual-edit',
+  });
   return token;
 }
 
-function rootForCliToken(token: string): { projectId: string; root: string } {
+export function revokeWorkspaceCliToken(token: string): void {
+  cliTokens.delete(token);
+}
+
+/** Resolve the project identity carried by a live, project-scoped CLI token. */
+export function workspaceProjectIdForCliToken(token: string): string {
+  return rootForCliToken(token).projectId;
+}
+
+export function workspaceCliGrantForToken(token: string): {
+  projectId: string;
+  mcpMode: WorkspaceCliMcpMode;
+} {
+  const grant = rootForCliToken(token);
+  return { projectId: grant.projectId, mcpMode: grant.mcpMode };
+}
+
+function rootForCliToken(token: string): WorkspaceCliGrant & { root: string } {
   const grant = cliTokens.get(token);
   if (!grant || grant.expiresAt < Date.now()) {
     cliTokens.delete(token);
@@ -171,7 +208,7 @@ function rootForCliToken(token: string): { projectId: string; root: string } {
   }
   const root = roots.get(grant.projectId);
   if (!root) throw new Error('Workspace is not open');
-  return { projectId: grant.projectId, root };
+  return { ...grant, root };
 }
 
 export async function listWorkspaceFilesForCli(token: string, requested = '.'): Promise<unknown> {

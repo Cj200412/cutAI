@@ -1,35 +1,36 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-const GUIDE_VERSION = 1;
+const GUIDE_VERSION = 2;
 const GUIDE_DIR = join('.cutai', 'agent-guides');
 
 export const CUTAI_AGENT_SYSTEM_PROMPT = [
   'You are the native Claude Code agent embedded in CutAI.',
   'For CutAI project or timeline work, follow .cutai/agent-guides/README.md.',
-  'Read only the guide page relevant to the task plus .cutai/project.json; do not explore application source code, old sessions, audit logs, backups, or the web to rediscover the project format.',
+  'Use the connected CutAI MCP server for timeline, caption, track, preview, and project operations; do not edit .cutai/project.json directly.',
+  'For ordinary workspace files, read only the guide page relevant to the task and the user-requested files; do not explore application source code, old sessions, audit logs, backups, or the web to rediscover the project format.',
   'When the request is clear, execute it immediately and finish with a concise Chinese delivery summary containing what changed, where it changed, validation performed, and any real blocker.',
-  'For visual judgments about video content, do not infer from filenames, duration, transcript status, or project JSON alone. The native CLI session has no CutAI frame-inspection tool: if the source is not directly readable as a local file, report the exact source path and that visual inspection is unavailable, instead of asking vague clarification questions or claiming to have seen the footage.',
+  'For visual judgments about video content, use the CutAI MCP frame/timeline inspection tools; never infer from filenames, duration, transcript status, or project JSON alone.',
 ].join(' ');
 
 const README = `<!-- cutai-agent-guide-v${GUIDE_VERSION} -->
 # CutAI 原生 Agent 指引
 
-本目录由 CutAI 生成，供内置 Claude Agent SDK 使用。它不是 MCP 配置。
+本目录由 CutAI 生成，供本地 CLI Agent 使用。时间线编辑的稳定边界是 CutAI MCP；本目录只补充工作区纪律和回退说明。
 
 ## 每次任务的最短路径
 
-1. 读取本文件。
-2. 读取 \`.cutai/project.json\`；只在需要时间线结构时再读 \`project-format.md\`，需要手写 MG 时再读 \`motion-graphics.md\`。
-3. 用户要求明确时直接修改，不要遍历应用源码、旧会话、审计、备份或联网搜索格式。
-4. 保持 \`.cutai/project.json\` 为严格 JSON。只修改用户要求的字段，不改源媒体。
-5. 写入后重新读取并验证 JSON、轨道引用、帧范围和素材引用。
-6. 最终用简短中文交付：改了什么、时间点/对象、验证结果、真实阻塞。
+1. 读取本文件；调用 CutAI MCP 的 \`openchatcut_status\`。若工具列表提供 \`target_project\`，再绑定提示词中的 project id；只读计划会话已由令牌固定工程，不提供目标切换。
+2. 问答或检查先调用只读工具。需要编辑时，先 \`begin_edit_session\`，再调用编辑器工具，最后 \`review_edit_session\`。
+3. 默认使用 manual 会话，让 CutAI 界面展示提案并由用户确认；只有宿主明确授权 auto 才自动应用。
+4. 普通工作区文件才使用 Read/Glob/Grep/Write/Edit，并严格限制在工程根目录；不要直接写 \`.cutai/project.json\`、源媒体、审计或会话文件。
+5. 用户要求明确时直接执行，不要遍历应用源码、旧会话、审计、备份或联网搜索工程格式。
+6. 最终用简短中文交付：改了什么、时间点/对象、验证结果、真实阻塞。未收到 \`applied\` 不得声称完成。
 
 ## 任务判断
 
 - 问答/分析：只读，不修改工程。
-- 时间线、字幕、MG、轨道、画布修改：编辑 \`.cutai/project.json\`。
+- 时间线、字幕、MG、轨道、画布修改：只通过 CutAI MCP 编辑会话执行。
 - 普通项目文件任务：编辑用户指定文件，不碰 \`.cutai/project.json\`。
 - 源媒体缺失：不要伪造或改写为不存在的路径；明确报告需要重新导入或重连。
 
@@ -38,11 +39,13 @@ const README = `<!-- cutai-agent-guide-v${GUIDE_VERSION} -->
 - 不把“已写 JSON”等同于完成；必须验证 CutAI 能校验并载入该工程。
 - 不输出长篇内部推理或工具清单。
 - 不声称看过画面，除非任务中确实获得了可用帧或预览证据。
-- 不引入 MCP、ChatCut 或外部转换层。
+- 不绕过 MCP 直接修改编辑器内部工程文件。
 `;
 
 const PROJECT_FORMAT = `<!-- cutai-agent-guide-v${GUIDE_VERSION} -->
 # project.json 格式与不变量
+
+本页只用于工程迁移/损坏诊断；正常时间线编辑必须走 CutAI MCP，不直接写此文件。
 
 CutAI 当前持久化版本为 \`version: 3\`。
 

@@ -28,6 +28,7 @@ import { useTimelineShortcuts } from './useTimelineShortcuts';
 import { useTimelinePointer } from './useTimelinePointer';
 import { usePlayheadPaint } from './usePlayheadPaint';
 import { useTimelineZoomController } from './useTimelineZoomController';
+import { previewTrackReorder, reducerOrderForTrackDrop, sameKindTrackIds } from '../../editor/trackReorder';
 import { applyLibraryToClip as applyToClip, applyLibraryToTrack as applyToTrack } from './libraryDropActions';
 import {
   HEADER_W, MAX_ROW, MIN_ROW, RULER_H, TRACK_ROW,
@@ -56,6 +57,11 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
   const empty = state.items.length === 0;
   const total = empty ? 0 : timelineDuration(state);
   const trackIds = timelineTrackIds(state);
+  const [trackDrag, setTrackDrag] = useState<{
+    sourceTrackId: TrackId;
+    pointerId: number;
+    visualInsertIndex: number;
+  } | null>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const timelineId = (state as { id?: string }).id;
@@ -229,12 +235,88 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
     return trackIds[trackIds.length - 1] ?? '';
   };
 
+  const trackInsertIndexFromClientY = (sourceTrackId: TrackId, clientY: number): number => {
+    const rect = innerRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    const sourceKind = trackKind(state, sourceTrackId);
+    let y = rect.top + RULER_H;
+    let insertIndex = 0;
+    for (const id of trackIds) {
+      const height = rowHeightOf(id);
+      if (id !== sourceTrackId && trackKind(state, id) === sourceKind) {
+        if (clientY < y + height / 2) return insertIndex;
+        insertIndex += 1;
+      }
+      y += height;
+    }
+    return insertIndex;
+  };
+
+  const trackDropLineTop = (sourceTrackId: TrackId, visualInsertIndex: number): number | null => {
+    const remaining = sameKindTrackIds(state, sourceTrackId).filter((id) => id !== sourceTrackId);
+    if (!remaining.length) return null;
+    const index = Math.max(0, Math.min(visualInsertIndex, remaining.length));
+    const anchor = remaining[Math.min(index, remaining.length - 1)]!;
+    let top = RULER_H;
+    for (const id of trackIds) {
+      if (id === anchor) return index === remaining.length ? top + rowHeightOf(id) : top;
+      top += rowHeightOf(id);
+    }
+    return null;
+  };
+
   // 指针状态机:片段拖动/裁剪、空白框选、钢笔点拖、引用拾取(useTimelinePointer)
   const pointer = useTimelinePointer({
     state, commands, editMode, snapping, pickMode, px,
     playheadRef, scrollRef, frameFromClientX, trackFromClientY, itemsInMarquee,
   });
-  const { drag, marquee, pickDrag, startPick, onPointerMove, onPointerUp } = pointer;
+  const { drag, marquee, pickDrag, startPick, onPointerMove, onPointerUp, onPointerCancel } = pointer;
+
+  const startTrackReorder = (event: React.PointerEvent<HTMLButtonElement>, sourceTrackId: TrackId) => {
+    if (event.button !== 0 || sameKindTrackIds(state, sourceTrackId).length < 2) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCaptionMenu(null);
+    setDuckMenu(null);
+    setTrackDrag({
+      sourceTrackId,
+      pointerId: event.pointerId,
+      visualInsertIndex: trackInsertIndexFromClientY(sourceTrackId, event.clientY),
+    });
+  };
+
+  const handleTimelinePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!trackDrag || event.pointerId !== trackDrag.pointerId) {
+      onPointerMove(event);
+      return;
+    }
+    event.preventDefault();
+    const visualInsertIndex = trackInsertIndexFromClientY(trackDrag.sourceTrackId, event.clientY);
+    setTrackDrag((current) => current && current.pointerId === event.pointerId
+      ? { ...current, visualInsertIndex }
+      : current);
+  };
+
+  const finishTrackReorder = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!trackDrag || event.pointerId !== trackDrag.pointerId) {
+      onPointerUp();
+      return;
+    }
+    const current = trackDrag;
+    setTrackDrag(null);
+    const preview = previewTrackReorder(state, current.sourceTrackId, current.visualInsertIndex);
+    if (preview.some((id, index) => id !== trackIds[index])) {
+      commands.updateTrack(current.sourceTrackId, {
+        order: reducerOrderForTrackDrop(state, current.sourceTrackId, current.visualInsertIndex),
+      });
+    }
+  };
+
+  const cancelTrackReorder = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (trackDrag?.pointerId === event.pointerId) setTrackDrag(null);
+    else onPointerCancel();
+  };
 
   /** library resource dropped on a clip (fx/lut/zoom/transition) or track (sound/mg) */
   const [libDropTarget, setLibDropTarget] = useState<string | null>(null);
@@ -304,7 +386,7 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
 
       {/* scrollable ruler + tracks (playhead spans both). Ctrl/⌘+wheel = time
           zoom at cursor, Alt+wheel = track-height zoom (native listener above). */}
-      <div ref={scrollRef} style={{ overflow: 'auto', flex: 1, minHeight: 0 }} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+      <div ref={scrollRef} style={{ overflow: 'auto', flex: 1, minHeight: 0 }} onPointerMove={handleTimelinePointerMove} onPointerUp={finishTrackReorder} onPointerCancel={cancelTrackReorder}
         title={t('Ctrl/⌘+滚轮 缩放时间轴 · Alt+滚轮 缩放轨道高度')}>
         <div ref={innerRef} style={{ position: 'relative', width: innerW }}>
           {/* ruler (click to seek, hold to scrub; selection mode: click = timepoint, drag = timerange).
@@ -343,8 +425,10 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
               <div key={trackId} className="cc-track-row" style={{ height: rowHeightOf(trackId), background: isDropTarget ? `color-mix(in srgb, ${theme.success} 15%, ${theme.bg})` : undefined }}>
                 <TrackHead
                   trackId={trackId} kind={meta.kind} alias={alias} trackName={trackName} config={headConfig}
-                  busy={busy} menuElevated={captionMenu?.id === trackId || duckMenu?.id === trackId}
+                  busy={busy} canReorder={sameKindTrackIds(state, trackId).length > 1} reordering={trackDrag?.sourceTrackId === trackId}
+                  menuElevated={captionMenu?.id === trackId || duckMenu?.id === trackId}
                   width={HEADER_W} commands={commands}
+                  onReorderPointerDown={(event) => startTrackReorder(event, trackId)}
                   onToggleCaptions={() => toggleCaptions(trackId)}
                   // 两个菜单都贴触发按钮弹,top 夹取余量=菜单最大高+边距(字幕 420、闪避≈300);
                   // 字幕菜单左夹取还要给右弹的翻译子菜单留位(212+4+128)
@@ -378,6 +462,13 @@ export function Timeline({ state, commands, playerRef, projectId, onRecordVoiceo
               </div>
             );
           })}
+
+          {trackDrag && trackDropLineTop(trackDrag.sourceTrackId, trackDrag.visualInsertIndex) !== null && (
+            <div
+              className="cc-track-drop-line"
+              style={{ top: trackDropLineTop(trackDrag.sourceTrackId, trackDrag.visualInsertIndex)! - 1 }}
+            />
+          )}
 
           {/* snap guide — appears while a drag edge is locked onto a target */}
           {drag && drag.snapAt !== null && (

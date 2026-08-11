@@ -12,8 +12,11 @@ try {
   const motionGraphics = await readFile(join(directory, 'motion-graphics.md'), 'utf8');
 
   assert.match(readme, /每次任务的最短路径/);
+  assert.match(readme, /CutAI MCP/);
+  assert.match(readme, /begin_edit_session/);
   assert.match(projectFormat, /"version": 3/);
   assert.match(projectFormat, /activeTimelineId/);
+  assert.match(projectFormat, /正常时间线编辑必须走 CutAI MCP/);
   assert.match(motionGraphics, /useCurrentFrame/);
   assert.match(motionGraphics, /不写 import、require、export/);
 

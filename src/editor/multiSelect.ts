@@ -1,9 +1,10 @@
 // Multi-select ops: move / remove a set of clips as one undoable step.
 // Used by timeline pointer (group drag), shortcuts (⌫), and clip context menu.
 import {
-  selectedIdsOf, timelineTrackIds, trackKind,
-  type TimelineItem, type TimelineState, type TrackId,
+  selectedIdsOf, timelineTrackIds,
+  type TimelineItem, type TimelineState,
 } from './types';
+import { legalMoveTrackShift, moveDestinationTrack, type MoveTrackShift } from './trackPlacement';
 
 /** Ids that should move together when dragging `primaryId` (the grab handle). */
 export function groupMoveIds(state: TimelineState, primaryId: string): string[] {
@@ -19,12 +20,13 @@ export function moveItemsByDelta(
   state: TimelineState,
   ids: string[],
   deltaF: number,
-  trackShift: { from: TrackId; to: TrackId } | null,
+  trackShift: MoveTrackShift | null,
 ): TimelineState {
   if (!ids.length) return state;
+  const legalTrackShift = legalMoveTrackShift(state, ids, trackShift);
   const order = timelineTrackIds(state);
-  const fromIdx = trackShift ? order.indexOf(trackShift.from) : -1;
-  const toIdx = trackShift ? order.indexOf(trackShift.to) : -1;
+  const fromIdx = legalTrackShift ? order.indexOf(legalTrackShift.from) : -1;
+  const toIdx = legalTrackShift ? order.indexOf(legalTrackShift.to) : -1;
   const dTrack = fromIdx >= 0 && toIdx >= 0 ? toIdx - fromIdx : 0;
   if (deltaF === 0 && dTrack === 0) return state;
 
@@ -32,19 +34,7 @@ export function moveItemsByDelta(
   const items = state.items.map((it) => {
     if (!idSet.has(it.id)) return it;
     if (state.tracks?.[it.track]?.locked) return it;
-    let track = it.track;
-    if (dTrack !== 0) {
-      const ni = order.indexOf(it.track) + dTrack;
-      if (ni >= 0 && ni < order.length) {
-        const candidate = order[ni]!;
-        if (
-          trackKind(state, candidate) === trackKind(state, it.track)
-          && !state.tracks?.[candidate]?.locked
-        ) {
-          track = candidate;
-        }
-      }
-    }
+    const track = moveDestinationTrack(state, it, legalTrackShift);
     return { ...it, startFrame: Math.max(0, it.startFrame + deltaF), track };
   });
   return { ...state, items };

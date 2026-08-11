@@ -281,6 +281,7 @@ async function boot(): Promise<void> {
     secrets,
   );
   const { origin } = await startEmbeddedServer(DIST_DIR, llmProxyConfig);
+  cliAgents.setOrigin(origin);
   console.log(`[desktop] embedded server at ${origin}`);
 
   const win = new BrowserWindow({

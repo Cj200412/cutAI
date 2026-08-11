@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer, useRef } from 'react';
 import type { AspectFit, ClipEffect, ClipFilters, ClipTransform, DesignStyle, KeyframeEasing, KeyframeProp, Marker, MediaAsset, ProjectDoc, Timeline, TimelineState, TrackFlags, TrackId, TrackKind, TrackUpdate, TransitionItem, TransitionType, Watermark, ZoomEffect } from './types';
-import { activeEditorState, activeTimeline, defaultMediaTrackId, defaultTrackId, MOTION_GRAPHIC_TRACK_NAME, motionGraphicTrackCandidate, resolveTrackId } from './types';
+import { activeEditorState, activeTimeline, defaultMediaTrackId, defaultTrackId, MOTION_GRAPHIC_TRACK_NAME, motionGraphicTrackCandidate, resolveTrackId, timelineTrackIds, trackKind } from './types';
 import type { Tpl } from '../types';
 import type { AudioAsset } from '../audio/library';
 import type { CaptionsData } from '../captions/types';
@@ -210,9 +210,16 @@ function buildCommands(dispatch: ProjectDispatch, getDoc: () => ProjectDoc): Edi
     }
     const candidate = motionGraphicTrackCandidate(state);
     if (candidate) {
-      // Empty and legacy pure-MG lanes become persistent, named MG lanes.
+      // Empty and legacy pure-MG lanes become persistent, named MG lanes. On
+      // this one-time upgrade, also put the overlay lane above ordinary video;
+      // once named, later user header reorders remain untouched.
       if (state.tracks?.[candidate]?.name !== MOTION_GRAPHIC_TRACK_NAME) {
-        dispatch({ type: 'track.update', track: candidate, patch: { name: MOTION_GRAPHIC_TRACK_NAME } });
+        const videoCount = timelineTrackIds(state).filter((id) => trackKind(state, id) === 'video').length;
+        dispatch({
+          type: 'track.update',
+          track: candidate,
+          patch: { name: MOTION_GRAPHIC_TRACK_NAME, order: Math.max(0, videoCount - 1) },
+        });
       }
       return candidate;
     }

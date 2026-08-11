@@ -24,10 +24,14 @@ interface TrackHeadProps {
   config: TrackFlags;
   /** non-empty track (or has transitions) — delete disabled */
   busy: boolean;
+  /** Only same-kind lanes can be reordered; one-lane groups disable the grip. */
+  canReorder: boolean;
+  reordering: boolean;
   /** caption menu open on this track → raise head above neighbors */
   menuElevated: boolean;
   width: number;
   commands: EditorCommands;
+  onReorderPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onToggleCaptions: () => void;
   onToggleCaptionMenu: (rect: DOMRect) => void;
   onToggleDuckMenu: (rect: DOMRect) => void;
@@ -38,8 +42,8 @@ interface TrackHeadProps {
 }
 
 export function TrackHead({
-  trackId, kind, alias, trackName, config, busy, menuElevated, width,
-  commands, onToggleCaptions, onToggleCaptionMenu, onToggleDuckMenu, duckMenuPos, onCloseDuckMenu, children,
+  trackId, kind, alias, trackName, config, busy, canReorder, reordering, menuElevated, width,
+  commands, onReorderPointerDown, onToggleCaptions, onToggleCaptionMenu, onToggleDuckMenu, duckMenuPos, onCloseDuckMenu, children,
 }: TrackHeadProps) {
   const t = useT();
   const hidden = config.hidden ?? false;
@@ -55,6 +59,16 @@ export function TrackHead({
     <div className="cc-track-head" style={{ width, ...(menuElevated ? { zIndex: 40 } : {}) }}>
       <div className="cc-track-head-controls">
         <span className="cc-track-badge" title={t('{name}（{id}）', { name: trackName, id: trackId })} style={{ background: badgeColor }}>{`${t(badgeLabel)}${alias.slice(1)}`}</span>
+        <button
+          type="button"
+          className={`cc-track-reorder-grip${reordering ? ' active' : ''}`}
+          disabled={!canReorder}
+          aria-label={t('拖动调整轨道上下顺序')}
+          title={canReorder ? t('拖动调整轨道上下顺序（同类型轨道）') : t('至少需要两条同类型轨道')}
+          onPointerDown={onReorderPointerDown}
+        >
+          <Icon name="sort" size={13} />
+        </button>
         <button style={flagBtn(hidden)} title={hidden ? t('显示轨道') : t('隐藏轨道')} onClick={isCaption ? onToggleCaptions : () => commands.toggleTrackFlag(trackId, 'hidden')}><Icon name={hidden ? 'eyeOff' : 'eye'} size={14} /></button>
         {!isCaption && <button style={flagBtn(muted)} title={muted ? t('取消静音') : t('静音轨道')} onClick={() => commands.toggleTrackFlag(trackId, 'muted')}><Icon name={muted ? 'volumeOff' : 'volume'} size={14} /></button>}
         <button style={{ ...flagBtn(false), color: locked ? theme.gold : theme.textMuted }} title={locked ? t('解锁轨道') : t('锁定轨道（禁止移动 / 裁剪 / 删除 / 落轨）')} onClick={() => commands.toggleTrackFlag(trackId, 'locked')}><Icon name={locked ? 'lock' : 'unlock'} size={14} /></button>

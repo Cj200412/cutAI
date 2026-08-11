@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { issueWorkspaceCliToken } from './workspace-project.ts';
+import { issueWorkspaceCliToken, revokeWorkspaceCliToken, workspaceProjectMatchesRoot } from './workspace-project.ts';
 import { runClaudeSdk, runCodexSdk } from './cli-agent-sdk.ts';
+import { cliAgentRuntimeEnv } from './cli-agent-env.ts';
+import { cliAgentMcpUrl, type CliAgentMcpContext } from './cli-agent-mcp.ts';
 
 export type CliAgentKind = 'claude' | 'codex' | 'custom-acp';
 export type CliReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -192,17 +194,6 @@ function unique(values: Array<string | undefined>): string[] {
   ];
 }
 
-function runtimeEnv(kind: CliAgentKind): NodeJS.ProcessEnv {
-  const allowed = [
-    'SystemRoot', 'WINDIR', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
-    'TEMP', 'TMP', 'LANG', 'LC_ALL', 'PATH', 'Path', 'PATHEXT', 'ComSpec',
-    'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',
-  ];
-  if (kind === 'claude') allowed.push('CLAUDE_CONFIG_DIR');
-  if (kind === 'codex') allowed.push('CODEX_HOME');
-  return Object.fromEntries(allowed.flatMap((name) => process.env[name] ? [[name, process.env[name]]] : []));
-}
-
 function collectStrings(value: unknown, keys: ReadonlySet<string>, out: string[]): void {
   if (!value || typeof value !== 'object') return;
   if (Array.isArray(value)) {
@@ -371,7 +362,7 @@ export class CliAgentHost {
       const child = spawn(executable, ['--version'], {
         windowsHide: true,
         shell: false,
-        env: runtimeEnv(executable.toLowerCase().includes('claude') ? 'claude' : 'codex'),
+        env: cliAgentRuntimeEnv(executable.toLowerCase().includes('claude') ? 'claude' : 'codex'),
       });
       let output = '';
       const timer = setTimeout(() => { child.kill(); resolveVersion('unknown'); }, 4_000);
@@ -485,7 +476,9 @@ export class CliAgentHost {
   }
 
   private async argsFor(profile: CliAgentProfile, request: CliRunRequest, runId: string): Promise<string[]> {
-    const cliToken = issueWorkspaceCliToken(request.projectId);
+    const cliToken = issueWorkspaceCliToken(request.projectId, {
+      mcpMode: request.planMode ? 'read-only' : 'manual-edit',
+    });
     const mcpUrl = `${this.origin}/api/external-mcp/mcp?cutaiCliToken=${encodeURIComponent(cliToken)}`;
     const directEdit = request.fileAccess === 'workspace-write';
     const instruction = `${request.prompt}\n\nCutAI project id: ${request.projectId}. `
@@ -535,7 +528,9 @@ export class CliAgentHost {
   ): Promise<CliRunResult> {
     const emit = (event: CliStreamPayload): void => onEvent?.({ runId, ...event });
     const directEdit = request.fileAccess === 'workspace-write';
-    const cliToken = issueWorkspaceCliToken(request.projectId);
+    const cliToken = issueWorkspaceCliToken(request.projectId, {
+      mcpMode: request.planMode ? 'read-only' : 'manual-edit',
+    });
     const mcpUrl = `${this.origin}/api/external-mcp/mcp?cutaiCliToken=${encodeURIComponent(cliToken)}`;
     const instruction = `${request.prompt}\n\nCutAI project id: ${request.projectId}. `
       + (directEdit
@@ -550,7 +545,7 @@ export class CliAgentHost {
         cwd: root,
         shell: false,
         windowsHide: true,
-        env: runtimeEnv(profile.kind),
+        env: cliAgentRuntimeEnv(profile.kind),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.processes.set(runId, child);
@@ -733,14 +728,33 @@ export class CliAgentHost {
     if (!profile.authorizedRoots.map((value) => resolve(value)).includes(root)) {
       throw new Error('CLI access to this project has not been authorized');
     }
+    if (!workspaceProjectMatchesRoot(request.projectId, root)) {
+      throw new Error('CLI project id does not match the authorized workspace root');
+    }
     const runId = request.runId || randomUUID();
+    if (this.sdkRuns.has(runId) || this.processes.has(runId)) {
+      throw new Error(`CLI run ${runId} is already active`);
+    }
     if (profile.kind === 'claude' || profile.kind === 'codex') {
       const controller = new AbortController();
       this.sdkRuns.set(runId, controller);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, RUN_TIMEOUT_MS);
+      let cliToken: string | undefined;
+      let mcp: CliAgentMcpContext | undefined;
+      if (this.origin) {
+        cliToken = issueWorkspaceCliToken(request.projectId, {
+          mcpMode: request.planMode ? 'read-only' : 'manual-edit',
+        });
+        mcp = { url: cliAgentMcpUrl(this.origin, cliToken) };
+      }
       try {
         const result = profile.kind === 'claude'
-          ? await runClaudeSdk(profile, request, runId, controller, onEvent)
-          : await runCodexSdk(profile, request, runId, controller, onEvent);
+          ? await runClaudeSdk(profile, request, runId, controller, onEvent, mcp)
+          : await runCodexSdk(profile, request, runId, controller, onEvent, mcp);
         await this.appendWorkspaceRecord(root, 'sessions', `${profile.id}.jsonl`, {
           type: 'sdk_turn',
           at: new Date().toISOString(),
@@ -756,11 +770,14 @@ export class CliAgentHost {
         });
         return result;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const normalized = timedOut ? new Error('CLI session timed out') : error;
+        const message = normalized instanceof Error ? normalized.message : String(normalized);
         onEvent?.({ runId, type: 'error', message });
-        throw error;
+        throw normalized;
       } finally {
+        clearTimeout(timer);
         this.sdkRuns.delete(runId);
+        if (cliToken) revokeWorkspaceCliToken(cliToken);
       }
     }
     const args = await this.argsFor(profile, request, runId);
@@ -770,7 +787,7 @@ export class CliAgentHost {
         cwd: root,
         shell: false,
         windowsHide: true,
-        env: runtimeEnv(profile.kind),
+        env: cliAgentRuntimeEnv(profile.kind),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.processes.set(runId, child);

@@ -21,6 +21,8 @@ import { createExternalProject, listExternalProjects } from './projects.ts';
 import {
   listWorkspaceFilesForCli,
   readWorkspaceFileForCli,
+  workspaceCliGrantForToken,
+  workspaceProjectIdForCliToken,
 } from '../../desktop/workspace-project.ts';
 
 export const OPENCHATCUT_SKILL_BASELINE = '2026-07-27.1';
@@ -114,22 +116,41 @@ function editorUrl(args: Record<string, unknown>, projectId: string, fallbackBas
 }
 
 export function mcpTools(cliToken?: string): Tool[] {
+  const grant = cliToken ? workspaceCliGrantForToken(cliToken) : undefined;
+  const boundProjectId = grant?.projectId;
+  const readOnly = grant?.mcpMode === 'read-only';
   const controls = new Set(CONTROL_TOOLS.map((tool) => tool.name));
-  const editorTools = registeredTools()
+  const editorTools = registeredTools(boundProjectId)
     .filter((tool) => !controls.has(tool.name))
-    .map((tool): Tool => ({
-      name: tool.name,
-      description: tool.description,
-      annotations: tool.annotations,
-      inputSchema: {
-        ...tool.input_schema,
-        properties: {
-          ...tool.input_schema.properties,
-          editorProjectId: PROJECT_SELECTOR,
-        },
-      },
-    }));
-  return [...CONTROL_TOOLS, ...(cliToken ? CLI_WORKSPACE_TOOLS : []), ...editorTools];
+    .filter((tool) => !readOnly || tool.annotations?.readOnlyHint === true)
+    .map((tool): Tool => {
+      const properties: Record<string, object> = {
+        ...(tool.input_schema.properties as Record<string, object> | undefined),
+        editorProjectId: PROJECT_SELECTOR,
+      };
+      if (boundProjectId && tool.name === 'begin_edit_session') {
+        const current = properties.approvalMode;
+        properties.approvalMode = {
+          ...(current && typeof current === 'object' ? current as Record<string, unknown> : {}),
+          type: 'string',
+          enum: ['manual'],
+          default: 'manual',
+          description: 'Local CLI Agent sessions always require review in CutAI before applying edits.',
+        };
+      }
+      return {
+        name: tool.name,
+        description: boundProjectId && tool.name === 'begin_edit_session'
+          ? 'Start a project-bound edit draft. Local CLI Agent sessions are manual-review only.'
+          : tool.description,
+        annotations: tool.annotations,
+        inputSchema: { ...tool.input_schema, properties },
+      };
+    });
+  const controlTools = readOnly
+    ? CONTROL_TOOLS.filter((tool) => tool.annotations?.readOnlyHint === true)
+    : CONTROL_TOOLS;
+  return [...controlTools, ...(cliToken ? CLI_WORKSPACE_TOOLS : []), ...editorTools];
 }
 
 async function callControlTool(
@@ -138,6 +159,7 @@ async function callControlTool(
   baseUrl: string,
   cliToken?: string,
 ): Promise<unknown | undefined> {
+  const boundProjectId = cliToken ? workspaceProjectIdForCliToken(cliToken) : undefined;
   if (name === 'cutai_workspace_list_files' && cliToken) {
     return listWorkspaceFilesForCli(cliToken, String(args.path ?? '.'));
   }
@@ -145,28 +167,46 @@ async function callControlTool(
     return readWorkspaceFileForCli(cliToken, String(args.path ?? ''));
   }
   if (name === 'openchatcut_status') {
-    return { connectedProjectIds: connectedProjectIds(), editors: editorStatuses(), toolCount: mcpTools().length };
+    return {
+      connectedProjectIds: boundProjectId
+        ? connectedProjectIds().filter((projectId) => projectId === boundProjectId)
+        : connectedProjectIds(),
+      editors: boundProjectId
+        ? editorStatuses().filter((editor) => editor.projectId === boundProjectId)
+        : editorStatuses(),
+      toolCount: mcpTools(cliToken).length,
+      ...(boundProjectId ? { boundProjectId } : {}),
+    };
   }
   if (name === 'list_projects') {
     const projects = await listExternalProjects(args.includeDeleted === true);
-    return projects.map((project) => ({
+    return projects.filter((project) => !boundProjectId || project.id === boundProjectId).map((project) => ({
       ...project,
       editorUrl: editorUrl(args, project.id, baseUrl),
     }));
   }
   if (name === 'create_project') {
+    if (boundProjectId) throw new Error('This CLI MCP session is bound to an existing CutAI project');
     const project = await createExternalProject(args);
     setTargetProject(project.id);
     return { ...project, editorUrl: editorUrl(args, project.id, baseUrl) };
   }
   if (name === 'target_project') {
-    const projectId = String(args.projectId ?? '').trim();
+    const requested = String(args.projectId ?? '').trim();
+    const projectId = boundProjectId ?? requested;
     if (!projectId) throw new Error('projectId is required');
-    setTargetProject(projectId);
+    if (boundProjectId && requested !== boundProjectId) {
+      throw new Error(`This CLI MCP session is bound to project ${boundProjectId}`);
+    }
+    if (!boundProjectId) setTargetProject(projectId);
     return { ok: true, projectId, editorUrl: editorUrl(args, projectId, baseUrl) };
   }
   if (name === 'get_editor_url') {
-    const projectId = resolveProjectId(args.projectId);
+    const requested = String(args.projectId ?? '').trim();
+    if (boundProjectId && requested && requested !== boundProjectId) {
+      throw new Error(`This CLI MCP session is bound to project ${boundProjectId}`);
+    }
+    const projectId = boundProjectId ?? resolveProjectId(args.projectId);
     return { projectId, editorUrl: editorUrl(args, projectId, baseUrl) };
   }
   return undefined;
@@ -176,9 +216,26 @@ async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToke
   const args = rawArgs && typeof rawArgs === 'object'
     ? { ...(rawArgs as Record<string, unknown>) }
     : {};
+  const grant = cliToken ? workspaceCliGrantForToken(cliToken) : undefined;
+  if (grant?.mcpMode === 'read-only' && !mcpTools(cliToken).some((tool) => tool.name === name)) {
+    throw new Error('This CLI Agent plan session is read-only; edit-session and mutating tools are unavailable');
+  }
+  if (grant?.mcpMode === 'manual-edit' && name === 'begin_edit_session') {
+    if (args.approvalMode === 'auto') {
+      throw new Error('Local CLI Agent edits require approvalMode manual and user review in CutAI');
+    }
+    if (args.approvalMode === undefined) args.approvalMode = 'manual';
+  }
   const control = await callControlTool(name, args, baseUrl, cliToken);
   if (control !== undefined) return control;
-  const projectId = resolveProjectId(args.editorProjectId);
+  const boundProjectId = cliToken ? workspaceProjectIdForCliToken(cliToken) : undefined;
+  const requestedProjectId = typeof args.editorProjectId === 'string'
+    ? args.editorProjectId.trim()
+    : '';
+  if (boundProjectId && requestedProjectId && requestedProjectId !== boundProjectId) {
+    throw new Error(`This CLI MCP session is bound to project ${boundProjectId}`);
+  }
+  const projectId = boundProjectId ?? resolveProjectId(args.editorProjectId);
   delete args.editorProjectId;
   if ((name === 'track_progress' || name === 'track_export') && args.action === 'wait') {
     const requested = Number(args.timeoutSeconds);
@@ -188,6 +245,22 @@ async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToke
 }
 
 function makeServer(baseUrl: string, cliToken?: string): Server {
+  const cliMode = cliToken ? workspaceCliGrantForToken(cliToken).mcpMode : undefined;
+  const sessionInstructions = cliMode === 'read-only'
+    ? [
+        'This project-bound local CLI plan session is read-only. Inspect with read-only tools; edit sessions and mutating tools are unavailable.',
+      ]
+    : cliToken
+    ? [
+        'This project-bound local CLI edit session is manual-review only. Call begin_edit_session with approvalMode manual, then pass its editSessionId to every editor tool.',
+        'Call review_edit_session when the draft is ready. The draft waits for approval in OpenChatCut; do not claim success until status is applied.',
+      ]
+    : [
+        'Call begin_edit_session first with approvalMode manual (default) or auto, then pass its editSessionId to every editor tool.',
+        'Call review_edit_session when the draft is ready.',
+        'Manual sessions wait for approval in OpenChatCut; auto sessions apply the complete draft during review_edit_session. Do not claim success until status is applied.',
+        'If an auto session becomes stale, discard it and begin a new session.',
+      ];
   const server = new Server(
     { name: 'openchatcut', version: '1.0.0' },
     {
@@ -195,10 +268,7 @@ function makeServer(baseUrl: string, cliToken?: string): Server {
       instructions: [
         `OpenChatCut external skill baseline: ${OPENCHATCUT_SKILL_BASELINE}. Update with npx skills update openchatcut when the installed skill is older.`,
         'OpenChatCut project edits are session-scoped.',
-        'Call begin_edit_session first with approvalMode manual (default) or auto, then pass its editSessionId to every editor tool.',
-        'Call review_edit_session when the draft is ready.',
-        'Manual sessions wait for approval in OpenChatCut; auto sessions apply the complete draft during review_edit_session. Do not claim success until status is applied.',
-        'If an auto session becomes stale, discard it and begin a new session.',
+        ...sessionInstructions,
       ].join(' '),
     },
   );

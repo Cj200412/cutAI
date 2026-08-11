@@ -7,6 +7,7 @@ import {
   type ExternalToolSchema,
 } from '../external-agent/broker.ts';
 import { handleMcpRequest, mcpTools } from '../external-agent/mcp.ts';
+import { workspaceProjectIdForCliToken } from '../../desktop/workspace-project.ts';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -44,9 +45,17 @@ function validTools(value: unknown): value is ExternalToolSchema[] {
   ));
 }
 
-function authorized(req: IncomingMessage): boolean {
+export function externalAgentRequestAuthorized(req: IncomingMessage): boolean {
   const token = process.env.OPENCHATCUT_MCP_TOKEN?.trim();
-  return !token || req.headers.authorization === `Bearer ${token}`;
+  if (!token || req.headers.authorization === `Bearer ${token}`) return true;
+  const cliToken = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cutaiCliToken');
+  if (!cliToken) return false;
+  try {
+    workspaceProjectIdForCliToken(cliToken);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function requestBaseUrl(req: IncomingMessage): string {
@@ -84,7 +93,7 @@ async function handleBridge(req: IncomingMessage, res: ServerResponse): Promise<
     sendJson(res, settleEditorCall(body.id, body.ok, body.value) ? 200 : 404, { ok: true });
     return;
   }
-  if (!authorized(req)) {
+  if (!externalAgentRequestAuthorized(req)) {
     sendJson(res, 401, { error: 'invalid OpenChatCut MCP token' });
     return;
   }
@@ -105,7 +114,7 @@ export function externalAgentPlugin(): Plugin {
         });
       });
       server.middlewares.use('/api/external-mcp/mcp', (req, res) => {
-        if (!authorized(req)) {
+        if (!externalAgentRequestAuthorized(req)) {
           sendJson(res, 401, { error: 'invalid OpenChatCut MCP token' });
           return;
         }
