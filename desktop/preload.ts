@@ -12,6 +12,12 @@ export interface CutaiDesktopApi {
   saveWorkspace(path: string, document: unknown): Promise<{ rootPath: string; manifest: WorkspaceManifestResult }>;
   rescanWorkspace(path: string): Promise<WorkspaceMediaResult[]>;
   listCliAgents(): Promise<CliAgentProfileResult[]>;
+  chooseCliExecutable(): Promise<string | null>;
+  createCliAgent(input: CustomCliAgentInputResult): Promise<CliAgentProfileResult>;
+  updateCliAgent(profileId: string, input: CustomCliAgentInputResult): Promise<CliAgentProfileResult>;
+  deleteCliAgent(profileId: string): Promise<{ deleted: boolean }>;
+  probeCliAgent(profileId: string): Promise<CliAgentProfileResult>;
+  revokeCliAgent(profileId: string, rootPath: string): Promise<{ revoked: boolean }>;
   authorizeCliAgent(profileId: string, rootPath: string, fingerprint: string): Promise<{ authorized: boolean }>;
   runCliAgent(request: CliRunRequest): Promise<CliRunResult>;
   onCliAgentEvent(listener: (event: CliStreamEvent) => void): () => void;
@@ -60,6 +66,19 @@ export interface CliAgentProfileResult {
   authorizedRoots: string[];
   models: Array<{ id: string; label: string; reasoningEfforts: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>; defaultReasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' }>;
   defaultModel?: string;
+  args?: string[];
+  envAllowlist?: string[];
+  startupTimeoutMs?: number;
+  supportsHttpMcp?: boolean;
+}
+
+export interface CustomCliAgentInputResult {
+  name: string;
+  executable: string;
+  args?: string[];
+  envAllowlist?: string[];
+  startupTimeoutMs?: number;
+  enabled?: boolean;
 }
 
 export interface CliRunRequest {
@@ -109,6 +128,12 @@ const api: CutaiDesktopApi = {
   saveWorkspace: (path, document) => ipcRenderer.invoke('cutai:workspace-save', path, document) as Promise<{ rootPath: string; manifest: WorkspaceManifestResult }>,
   rescanWorkspace: (path) => ipcRenderer.invoke('cutai:workspace-rescan', path) as Promise<WorkspaceMediaResult[]>,
   listCliAgents: () => ipcRenderer.invoke('cutai:cli-profiles') as Promise<CliAgentProfileResult[]>,
+  chooseCliExecutable: () => ipcRenderer.invoke('cutai:cli-choose-executable') as Promise<string | null>,
+  createCliAgent: (input) => ipcRenderer.invoke('cutai:cli-create', input) as Promise<CliAgentProfileResult>,
+  updateCliAgent: (profileId, input) => ipcRenderer.invoke('cutai:cli-update', profileId, input) as Promise<CliAgentProfileResult>,
+  deleteCliAgent: (profileId) => ipcRenderer.invoke('cutai:cli-delete', profileId) as Promise<{ deleted: boolean }>,
+  probeCliAgent: (profileId) => ipcRenderer.invoke('cutai:cli-probe', profileId) as Promise<CliAgentProfileResult>,
+  revokeCliAgent: (profileId, rootPath) => ipcRenderer.invoke('cutai:cli-revoke', profileId, rootPath) as Promise<{ revoked: boolean }>,
   authorizeCliAgent: (profileId, rootPath, fingerprint) =>
     ipcRenderer.invoke('cutai:cli-authorize', profileId, rootPath, fingerprint) as Promise<{ authorized: boolean }>,
   runCliAgent: (request) => ipcRenderer.invoke('cutai:cli-run', request) as Promise<CliRunResult>,

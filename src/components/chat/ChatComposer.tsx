@@ -13,6 +13,7 @@ import {
   selectAgentModel,
   subscribeAgentModels,
 } from '../../agent/model-selection';
+import { LocalCliAgentDialog } from './LocalCliAgentDialog';
 
 /** composer shell height (includes textarea + toolbar); drag the top handle to resize */
 const COMPOSER_H_MIN = 88;
@@ -58,6 +59,7 @@ interface ChatComposerProps {
   placeholder?: string;
   agentSource: string;
   cliProfiles: readonly CliAgentProfileResult[];
+  onCliProfilesChanged: (profiles: CliAgentProfileResult[]) => void;
   projectRoot?: string;
   projectId: string;
   onAgentSourceChange: (source: string) => void;
@@ -143,7 +145,7 @@ export function ChatComposer(props: ChatComposerProps) {
     autoApply, onAutoApplyChange, selecting, onToggleSelecting,
     creativeMode, onCreativeModeChange, references, onInsertRef,
     selectedRefs = [], onRemoveRef, onPasteFiles, pasting, pasteError, onDismissPasteError,
-    taRef, placeholder, agentSource, cliProfiles, projectRoot, projectId, onAgentSourceChange,
+    taRef, placeholder, agentSource, cliProfiles, onCliProfilesChanged, projectRoot, projectId, onAgentSourceChange,
   } = props;
   // 水合自定义技能(manage_skill):挂载时读 IDB → 内存注册表,bump 触发重渲染
   // 让 allCreativeSkills()/findSkill 反映自定义技能。真源是 IDB,manage_skill 工具也水合同一份。
@@ -159,6 +161,8 @@ export function ChatComposer(props: ChatComposerProps) {
   );
   const activeModel = modelState.choices.find((choice) => choice.id === modelState.activeId);
   const activeCli = cliProfiles.find((profile) => profile.id === agentSource);
+  const isCustomAcp = activeCli?.kind === 'custom-acp';
+  const [customCliOpen, setCustomCliOpen] = useState(false);
   const builtinIds = new Set(CREATIVE_SKILLS.map((s) => s.id));
   const [pop, setPop] = useState<Pop>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -166,6 +170,12 @@ export function ChatComposer(props: ChatComposerProps) {
   const [modelQuery, setModelQuery] = useState('');
   const [popAnchor, setPopAnchor] = useState<HTMLElement | null>(null);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => loadAgentSettings());
+  useEffect(() => {
+    if (!running) return;
+    setPop(null);
+    setPopAnchor(null);
+    setCustomCliOpen(false);
+  }, [running]);
   const cliModelKey = activeCli ? `cutai:cli-model:${projectId}:${activeCli.id}` : '';
   const cliEffortKey = activeCli ? `cutai:cli-effort:${projectId}:${activeCli.id}` : '';
   const cliFileAccessKey = activeCli ? `cutai:cli-file-access:${projectId}:${activeCli.id}` : '';
@@ -409,6 +419,7 @@ export function ChatComposer(props: ChatComposerProps) {
           </button>
           <button
             type="button"
+            disabled={running}
             title={activeCli
               ? t('当前 Agent：{name}', { name: `${activeCli.name} · ${activeCli.version}` })
               : activeModel
@@ -427,7 +438,8 @@ export function ChatComposer(props: ChatComposerProps) {
               borderRadius: 4,
               background: pop === 'model' ? theme.panel : 'transparent',
               color: activeModel || activeCli ? theme.textDim : theme.textDim,
-              cursor: 'pointer',
+              cursor: running ? 'default' : 'pointer',
+              opacity: running ? 0.55 : 1,
               fontSize: 11,
               flexShrink: 1,
             }}
@@ -473,8 +485,8 @@ export function ChatComposer(props: ChatComposerProps) {
                 <strong style={{ color: theme.text, fontSize: 11 }}>{t('AGENT 选择')}</strong>
                 <span>{1 + cliProfiles.filter((profile) => profile.compatible).length}/{1 + cliProfiles.length}</span>
               </div>
-              <button type="button" onClick={() => onAgentSourceChange('api')}
-                style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: agentSource === 'api' ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: agentSource === 'api' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+              <button type="button" disabled={running} onClick={() => onAgentSourceChange('api')}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: agentSource === 'api' ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: agentSource === 'api' ? theme.panel : 'transparent', color: running ? theme.textDim : theme.text, cursor: running ? 'default' : 'pointer', textAlign: 'left' }}>
                 <Icon name="cloud" size={15} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <strong style={{ display: 'block', fontSize: 12 }}>ChatCut</strong>
@@ -485,27 +497,40 @@ export function ChatComposer(props: ChatComposerProps) {
               {cliProfiles.map((profile) => {
                 const active = agentSource === profile.id;
                 const authorized = Boolean(projectRoot && profile.authorizedRoots.includes(projectRoot));
-                return <button type="button" key={profile.id} disabled={!profile.compatible}
+                const capability = profile.kind === 'custom-acp'
+                  ? profile.supportsHttpMcp ? t('CutAI MCP') : t('仅问答（无 HTTP MCP）')
+                  : '';
+                return <button type="button" key={profile.id} disabled={running || !profile.compatible}
                   onClick={() => { onAgentSourceChange(profile.id); closePop(); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: active ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: active ? theme.panel : 'transparent', color: profile.compatible ? theme.text : theme.textDim, cursor: profile.compatible ? 'pointer' : 'default', textAlign: 'left' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 9px', border: 0, borderLeft: active ? `2px solid ${theme.accent}` : '2px solid transparent', borderRadius: 4, background: active ? theme.panel : 'transparent', color: profile.compatible && !running ? theme.text : theme.textDim, cursor: profile.compatible && !running ? 'pointer' : 'default', textAlign: 'left' }}>
                   <Icon name="plug" size={15} />
                   <span style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ display: 'block', fontSize: 12 }}>{profile.kind === 'claude' ? 'Claude Code' : 'Codex CLI'}</strong>
-                    <small style={{ color: theme.textDim }}>{profile.compatible ? `${profile.version} · ${authorized ? t('已授权') : t('待授权')}` : profile.reason || t('不可用')}</small>
+                    <strong style={{ display: 'block', fontSize: 12 }}>{profile.kind === 'claude' ? 'Claude Code' : profile.kind === 'codex' ? 'Codex CLI' : profile.name}</strong>
+                    <small style={{ color: theme.textDim }}>{profile.compatible
+                      ? [profile.version, capability, authorized ? t('已授权') : t('待授权')].filter(Boolean).join(' · ')
+                      : profile.reason || t('不可用')}</small>
                   </span>
                   <span title={authorized ? t('已授权') : t('待授权')} style={{ width: 7, height: 7, borderRadius: '50%', background: !profile.compatible ? theme.textDim : authorized ? theme.success : theme.accent }} />
                 </button>;
               })}
+              {!!window.cutaiDesktop && <button type="button" disabled={running} onClick={() => { closePop(); setCustomCliOpen(true); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 9, width: '100%', padding: '8px 9px', marginTop: 4, border: `1px dashed ${theme.border}`, borderRadius: 4, background: 'transparent', color: running ? theme.textDim : theme.accent, cursor: running ? 'default' : 'pointer', textAlign: 'left' }}>
+                <span>＋ 管理自定义 CLI / ACP</span><span>›</span>
+              </button>}
               <div style={{ marginTop: 5, borderTop: `0.5px solid ${theme.border}`, paddingTop: 5 }}>
                 <div style={{ fontSize: 10.5, color: theme.textDim, padding: '4px 8px' }}>{t('设置')}</div>
-                <button type="button" onClick={() => { setModelQuery(''); setModelLayer(agentSource === 'api' ? 'api' : 'cli'); }} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                {!isCustomAcp && <button type="button" onClick={() => { setModelQuery(''); setModelLayer(agentSource === 'api' ? 'api' : 'cli'); }} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
                   <span>{t('模型')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: theme.textDim, fontSize: 11, maxWidth: 175 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeCli ? selectedCliModel?.label || activeCli.defaultModel || t('默认') : activeModel?.model ?? t('未配置')}</span><span>›</span></span>
-                </button>
-                <button type="button" onClick={() => setModelLayer('reasoning')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                </button>}
+                {!isCustomAcp && <button type="button" onClick={() => setModelLayer('reasoning')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
                   <span>{t('推理强度')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: theme.textDim, fontSize: 11 }}>{effortLabels[selectedEffort]}<span>›</span></span>
-                </button>
+                </button>}
                 {activeCli && <button type="button" onClick={() => setModelLayer('file-access')} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
-                  <span>{t('文件权限')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: agentSettings.planMode ? theme.accent : cliFileAccess === 'workspace-write' ? theme.gold : theme.textDim, fontSize: 11 }}>{agentSettings.planMode ? t('计划模式（只读）') : cliFileAccess === 'workspace-write' ? t('直接编辑') : t('安全提案')}<span>›</span></span>
+                  <span>{isCustomAcp ? t('文件行为') : t('文件权限')}</span><span style={{ display: 'flex', alignItems: 'center', gap: 5, color: agentSettings.planMode ? theme.accent : cliFileAccess === 'workspace-write' ? theme.gold : theme.textDim, fontSize: 11 }}>{isCustomAcp
+                    ? agentSettings.planMode
+                      ? t('MCP 只读（进程非沙箱）')
+                      : cliFileAccess === 'workspace-write' ? t('直接编辑（高风险）') : t('仅提示不写（非沙箱）')
+                    : agentSettings.planMode ? t('计划模式（只读）') : cliFileAccess === 'workspace-write' ? t('直接编辑') : t('安全提案')}<span>›</span></span>
                 </button>}
                 <button type="button" onClick={() => onAutoApplyChange(!autoApply)} style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '8px 9px', border: 0, borderRadius: 4, background: 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
                   <span>{t('自动允许生成')}</span>
@@ -517,27 +542,36 @@ export function ChatComposer(props: ChatComposerProps) {
           <>
           <button type="button" onClick={() => setModelLayer('root')} style={{ display: 'flex', alignItems: 'center', gap: 5, border: 0, background: 'transparent', color: theme.textDim, padding: '3px 8px 7px', cursor: 'pointer', fontSize: 11 }}><span>‹</span>{t('返回 Agent 选择')}</button>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: theme.textDim, padding: '4px 8px 6px', letterSpacing: 0.3 }}>
-            <strong style={{ color: theme.text }}>{modelLayer === 'reasoning' ? t('推理强度') : modelLayer === 'file-access' ? t('文件权限') : modelLayer === 'cli' ? (activeCli?.name ?? t('本地 CLI')) : t('选择模型')}</strong>
+            <strong style={{ color: theme.text }}>{modelLayer === 'reasoning' ? t('推理强度') : modelLayer === 'file-access' ? (isCustomAcp ? t('ACP 文件行为') : t('文件权限')) : modelLayer === 'cli' ? (activeCli?.name ?? t('本地 CLI')) : t('选择模型')}</strong>
             {modelLayer === 'api' && <span>{filteredModelChoices.length}/{modelState.choices.length}</span>}
           </div>
           {modelLayer === 'file-access' ? (
             <div>
-              {agentSettings.planMode && <div style={{ padding: '6px 10px 8px', color: theme.accent, fontSize: 11, lineHeight: 1.45 }}>{t('计划模式已启用：本轮只读并先给计划，文件权限不会直接写入。')}</div>}
+              {agentSettings.planMode && <div style={{ padding: '6px 10px 8px', color: theme.accent, fontSize: 11, lineHeight: 1.45 }}>{isCustomAcp
+                ? t('计划模式只会把 CutAI MCP 限制为只读；ACP 进程仍以当前系统用户权限运行，不构成文件沙箱。')
+                : t('计划模式已启用：本轮只读并先给计划，文件权限不会直接写入。')}</div>}
               <button type="button" onClick={() => {
                 localStorage.setItem(cliFileAccessKey, 'proposal-only');
                 setCliSelectionVersion((value) => value + 1);
                 setModelLayer('root');
               }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', border: 0, borderRadius: 4, background: cliFileAccess === 'proposal-only' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
-                <span><strong style={{ display: 'block', fontSize: 12 }}>{t('安全提案')}</strong><small style={{ color: theme.textDim }}>{t('只读工程，编辑前由 CutAI 展示提案')}</small></span>
+                <span><strong style={{ display: 'block', fontSize: 12 }}>{isCustomAcp ? t('提示约束：不要直接写文件') : t('安全提案')}</strong><small style={{ color: theme.textDim }}>{isCustomAcp
+                  ? t('不是操作系统沙箱；CutAI 时间线编辑仍强制人工审核')
+                  : t('只读工程，编辑前由 CutAI 展示提案')}</small></span>
                 {cliFileAccess === 'proposal-only' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.accent }} />}
               </button>
               <button type="button" onClick={() => {
-                if (!window.confirm(t('高风险权限：直接编辑会绕过 CLI 文件沙箱，并可能绕过 CutAI 提案与撤销。CLI 理论上可访问工程外文件，请只向可信 CLI 下达明确任务。确定启用吗？'))) return;
+                const warning = isCustomAcp
+                  ? t('高风险权限：ACP 进程没有操作系统沙箱。允许直接编辑会明确授权它写入文件，并可能绕过 CutAI 提案与撤销；它理论上可访问工程外文件。请只向可信 CLI 下达明确任务。确定启用吗？')
+                  : t('高风险权限：直接编辑会绕过 CLI 文件沙箱，并可能绕过 CutAI 提案与撤销。CLI 理论上可访问工程外文件，请只向可信 CLI 下达明确任务。确定启用吗？');
+                if (!window.confirm(warning)) return;
                 localStorage.setItem(cliFileAccessKey, 'workspace-write');
                 setCliSelectionVersion((value) => value + 1);
                 setModelLayer('root');
               }} style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', border: 0, borderRadius: 4, background: cliFileAccess === 'workspace-write' ? theme.panel : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
-                <span><strong style={{ display: 'block', fontSize: 12, color: theme.gold }}>{t('直接编辑')}</strong><small style={{ color: theme.textDim }}>{t('绕过 CLI 文件沙箱，可直接修改本机文件')}</small></span>
+                <span><strong style={{ display: 'block', fontSize: 12, color: theme.gold }}>{isCustomAcp ? t('允许直接编辑（高风险）') : t('直接编辑')}</strong><small style={{ color: theme.textDim }}>{isCustomAcp
+                  ? t('ACP 进程以当前系统用户权限运行，可修改工程外文件')
+                  : t('绕过 CLI 文件沙箱，可直接修改本机文件')}</small></span>
                 {cliFileAccess === 'workspace-write' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.gold }} />}
               </button>
             </div>
@@ -725,6 +759,13 @@ export function ChatComposer(props: ChatComposerProps) {
           {refPopoverBody('template', t('暂无模板'))}
         </Popover>
       )}
+      <LocalCliAgentDialog
+        open={customCliOpen}
+        profiles={cliProfiles}
+        projectRoot={projectRoot}
+        onClose={() => setCustomCliOpen(false)}
+        onProfilesChanged={onCliProfilesChanged}
+      />
     </div>
   );
 }

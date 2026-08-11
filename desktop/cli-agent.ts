@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { issueWorkspaceCliToken, revokeWorkspaceCliToken, workspaceProjectMatchesRoot } from './workspace-project.ts';
 import { runClaudeSdk, runCodexSdk } from './cli-agent-sdk.ts';
 import { cliAgentRuntimeEnv } from './cli-agent-env.ts';
 import { cliAgentMcpUrl, type CliAgentMcpContext } from './cli-agent-mcp.ts';
+import { probeAcpStdio, runAcpStdio, type AcpProbeResult } from './acp-stdio.ts';
+import { cancelEditorOwner, releaseEditorOwner } from '../server/external-agent/broker.ts';
 
 export type CliAgentKind = 'claude' | 'codex' | 'custom-acp';
 export type CliReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -42,6 +44,19 @@ export interface CliAgentProfile {
   authorizedRoots: string[];
   models: CliAgentModel[];
   defaultModel?: string;
+  args?: string[];
+  envAllowlist?: string[];
+  startupTimeoutMs?: number;
+  supportsHttpMcp?: boolean;
+}
+
+export interface CustomCliAgentInput {
+  name: string;
+  executable: string;
+  args?: string[];
+  envAllowlist?: string[];
+  startupTimeoutMs?: number;
+  enabled?: boolean;
 }
 
 export interface CliRunRequest {
@@ -75,7 +90,24 @@ interface PersistedAuthorization {
   updatedAt: string;
 }
 
+interface PersistedCustomAcpProfile {
+  id: string;
+  name: string;
+  executable: string;
+  args: string[];
+  envAllowlist: string[];
+  startupTimeoutMs: number;
+  enabled: boolean;
+  probe?: AcpProbeResult;
+  /** Configuration/executable fingerprint observed by the successful probe. */
+  probeFingerprint?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface PersistedRegistry {
+  schemaVersion?: 2;
+  customProfiles?: PersistedCustomAcpProfile[];
   authorizations?: Record<string, PersistedAuthorization>;
 }
 
@@ -87,6 +119,12 @@ interface CliParseState {
 const MAX_LINE_BYTES = 16 * 1024 * 1024;
 const STDERR_LIMIT = 64 * 1024;
 const RUN_TIMEOUT_MS = 10 * 60 * 1000;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const CUSTOM_EXPLICIT_NETWORK_ENV = [
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+] as const;
 
 function terminateProcessTree(child: ChildProcessWithoutNullStreams): void {
   if (!child.pid) return;
@@ -106,9 +144,101 @@ async function existsFile(path: string): Promise<boolean> {
   try { return (await stat(path)).isFile(); } catch { return false; }
 }
 
+const fileHashCache = new Map<string, { size: number; mtimeMs: number; ctimeMs: number; hash: string }>();
+
 async function sha256File(path: string): Promise<string> {
+  const info = await stat(path);
+  const cached = fileHashCache.get(path);
+  if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs && cached.ctimeMs === info.ctimeMs) return cached.hash;
   const bytes = await readFile(path);
-  return createHash('sha256').update(bytes).digest('hex');
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  fileHashCache.set(path, { size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, hash });
+  return hash;
+}
+
+interface ActiveSdkRun {
+  controller: AbortController;
+  cliToken?: string;
+  tokenRevoked: boolean;
+  cancelled: boolean;
+  timedOut: boolean;
+  succeeded: boolean;
+  completed: Promise<void>;
+  markCompleted: () => void;
+}
+
+interface ActiveProbe {
+  controller: AbortController;
+  completed: Promise<void>;
+  markCompleted: () => void;
+}
+
+function createActiveProbe(): ActiveProbe {
+  const controller = new AbortController();
+  let markCompleted = (): void => undefined;
+  const completed = new Promise<void>((resolveCompleted) => { markCompleted = resolveCompleted; });
+  return { controller, completed, markCompleted };
+}
+
+function createActiveSdkRun(controller: AbortController): ActiveSdkRun {
+  let markCompleted = (): void => undefined;
+  const completed = new Promise<void>((resolveCompleted) => { markCompleted = resolveCompleted; });
+  return {
+    controller,
+    tokenRevoked: false,
+    cancelled: false,
+    timedOut: false,
+    succeeded: false,
+    completed,
+    markCompleted,
+  };
+}
+
+function validateCustomInput(input: CustomCliAgentInput): Omit<PersistedCustomAcpProfile, 'id' | 'probe' | 'createdAt' | 'updatedAt'> {
+  const name = input.name.trim();
+  if (!name || name.length > 100) throw new Error('Custom CLI name must be 1-100 characters');
+  const executable = input.executable.trim();
+  if (!isAbsolute(executable)) throw new Error('Custom CLI executable must be an absolute file path');
+  const args = input.args ?? [];
+  if (args.length > 64 || args.some((value) => typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > 8 * 1024)) {
+    throw new Error('Custom CLI accepts at most 64 arguments of 8 KiB each');
+  }
+  const envAllowlist = [...new Set(input.envAllowlist ?? [])];
+  if (envAllowlist.length > 64 || envAllowlist.some((nameValue) => !ENV_NAME.test(nameValue))) {
+    throw new Error('Custom CLI environment entries must be valid variable names');
+  }
+  const startupTimeoutMs = Math.round(input.startupTimeoutMs ?? 10_000);
+  if (startupTimeoutMs < 1_000 || startupTimeoutMs > 60_000) {
+    throw new Error('Custom CLI startup timeout must be between 1 and 60 seconds');
+  }
+  return {
+    name,
+    executable,
+    args: [...args],
+    envAllowlist,
+    startupTimeoutMs,
+    enabled: input.enabled !== false,
+  };
+}
+
+async function customFingerprint(profile: PersistedCustomAcpProfile): Promise<string> {
+  const executableHash = await sha256File(profile.executable);
+  return createHash('sha256').update(JSON.stringify({
+    executableHash,
+    executable: profile.executable,
+    args: profile.args,
+    envAllowlist: profile.envAllowlist,
+    startupTimeoutMs: profile.startupTimeoutMs,
+  })).digest('hex');
+}
+
+function customRuntimeEnv(profile: Pick<PersistedCustomAcpProfile, 'envAllowlist'>): NodeJS.ProcessEnv {
+  const env = cliAgentRuntimeEnv('custom-acp');
+  for (const name of CUSTOM_EXPLICIT_NETWORK_ENV) delete env[name];
+  for (const name of profile.envAllowlist) {
+    if (process.env[name] !== undefined) env[name] = process.env[name];
+  }
+  return env;
 }
 
 function isReasoningEffort(value: unknown): value is CliReasoningEffort {
@@ -321,8 +451,12 @@ export class CliAgentHost {
   private readonly registryPath: string;
   private readonly sessionDir: string;
   private readonly processes = new Map<string, ChildProcessWithoutNullStreams>();
-  private readonly sdkRuns = new Map<string, AbortController>();
+  private readonly sdkRuns = new Map<string, ActiveSdkRun>();
+  private readonly probeRuns = new Map<string, ActiveProbe>();
+  private builtinProfilesCache?: { at: number; profiles: CliAgentProfile[] };
   private origin = '';
+  private closing = false;
+  private closePromise?: Promise<void>;
 
   constructor(userDataPath: string) {
     this.registryPath = join(userDataPath, 'cli-agents.json');
@@ -337,13 +471,136 @@ export class CliAgentHost {
   }
 
   private async readRegistry(): Promise<PersistedRegistry> {
-    try { return JSON.parse(await readFile(this.registryPath, 'utf8')) as PersistedRegistry; }
-    catch { return {}; }
+    try {
+      const parsed = JSON.parse(await readFile(this.registryPath, 'utf8')) as PersistedRegistry;
+      return {
+        schemaVersion: 2,
+        customProfiles: Array.isArray(parsed.customProfiles) ? parsed.customProfiles : [],
+        authorizations: parsed.authorizations ?? {},
+      };
+    } catch {
+      return { schemaVersion: 2, customProfiles: [], authorizations: {} };
+    }
   }
 
   private async writeRegistry(value: PersistedRegistry): Promise<void> {
     await mkdir(dirname(this.registryPath), { recursive: true });
-    await writeFile(this.registryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    const temporary = `${this.registryPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify({ ...value, schemaVersion: 2 }, null, 2)}\n`, 'utf8');
+      await rename(temporary, this.registryPath);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async createCustomProfile(input: CustomCliAgentInput): Promise<CliAgentProfile> {
+    const values = validateCustomInput(input);
+    if (!await existsFile(values.executable)) throw new Error('Custom CLI executable does not exist or is not a file');
+    const registry = await this.readRegistry();
+    const now = new Date().toISOString();
+    const stored: PersistedCustomAcpProfile = {
+      id: `acp-${randomUUID()}`,
+      ...values,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.writeRegistry({
+      ...registry,
+      customProfiles: [...(registry.customProfiles ?? []), stored],
+    });
+    return (await this.profiles()).find((profile) => profile.id === stored.id)!;
+  }
+
+  async updateCustomProfile(profileId: string, input: CustomCliAgentInput): Promise<CliAgentProfile> {
+    const values = validateCustomInput(input);
+    if (!await existsFile(values.executable)) throw new Error('Custom CLI executable does not exist or is not a file');
+    const registry = await this.readRegistry();
+    const index = (registry.customProfiles ?? []).findIndex((profile) => profile.id === profileId);
+    if (index < 0) throw new Error('Custom CLI profile not found');
+    const current = registry.customProfiles![index];
+    const next: PersistedCustomAcpProfile = {
+      id: current.id,
+      ...values,
+      createdAt: current.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+    const customProfiles = [...registry.customProfiles!];
+    customProfiles[index] = next;
+    await this.writeRegistry({ ...registry, customProfiles });
+    return (await this.profiles()).find((profile) => profile.id === profileId)!;
+  }
+
+  async deleteCustomProfile(profileId: string): Promise<void> {
+    const registry = await this.readRegistry();
+    const customProfiles = (registry.customProfiles ?? []).filter((profile) => profile.id !== profileId);
+    if (customProfiles.length === (registry.customProfiles ?? []).length) {
+      throw new Error('Built-in or unknown CLI profiles cannot be deleted');
+    }
+    const authorizations = { ...(registry.authorizations ?? {}) };
+    delete authorizations[profileId];
+    await this.writeRegistry({ ...registry, customProfiles, authorizations });
+  }
+
+  async revoke(profileId: string, projectRoot: string): Promise<void> {
+    const registry = await this.readRegistry();
+    const authorization = registry.authorizations?.[profileId];
+    if (!authorization) return;
+    const root = resolve(projectRoot);
+    await this.writeRegistry({
+      ...registry,
+      authorizations: {
+        ...(registry.authorizations ?? {}),
+        [profileId]: {
+          ...authorization,
+          roots: authorization.roots.filter((candidate) => resolve(candidate) !== root),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  async probeCustomProfile(profileId: string): Promise<CliAgentProfile> {
+    if (this.closing) throw new Error('CutAI is closing; new CLI probes are disabled');
+    if (this.probeRuns.has(profileId)) throw new Error('This custom CLI handshake is already running');
+    const activeProbe = createActiveProbe();
+    this.probeRuns.set(profileId, activeProbe);
+    try {
+      const registry = await this.readRegistry();
+      const index = (registry.customProfiles ?? []).findIndex((profile) => profile.id === profileId);
+      if (index < 0) throw new Error('Custom CLI profile not found');
+      const stored = registry.customProfiles![index];
+      const fingerprintBefore = await customFingerprint(stored);
+      let probe = await probeAcpStdio({
+        executable: stored.executable,
+        args: stored.args,
+        cwd: dirname(stored.executable),
+        env: customRuntimeEnv(stored),
+        startupTimeoutMs: stored.startupTimeoutMs,
+        signal: activeProbe.controller.signal,
+      });
+      const fingerprintAfter = await customFingerprint(stored);
+      const probeFingerprint = fingerprintBefore === fingerprintAfter ? fingerprintAfter : undefined;
+      if (!probeFingerprint) {
+        probe = {
+          ...probe,
+          compatible: false,
+          reason: 'Custom CLI executable or launch configuration changed during the ACP handshake; test it again',
+        };
+      }
+      const customProfiles = [...registry.customProfiles!];
+      customProfiles[index] = {
+        ...stored,
+        probe,
+        probeFingerprint,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.writeRegistry({ ...registry, customProfiles });
+      return (await this.profiles()).find((profile) => profile.id === profileId)!;
+    } finally {
+      activeProbe.markCompleted();
+      this.probeRuns.delete(profileId);
+    }
   }
 
   private async appendWorkspaceRecord(
@@ -374,6 +631,7 @@ export class CliAgentHost {
   }
 
   async profiles(): Promise<CliAgentProfile[]> {
+    if (this.closing) throw new Error('CutAI is closing; CLI discovery is disabled');
     const claudeRoot = process.env.APPDATA ? join(process.env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe') : undefined;
     const codexHome = process.env.CODEX_HOME || (process.env.USERPROFILE ? join(process.env.USERPROFILE, '.codex') : undefined);
     const candidates: Array<{ id: string; kind: 'claude' | 'codex'; name: string; adapter: CliAgentProfile['adapter']; paths: string[]; config?: string }> = [
@@ -400,7 +658,16 @@ export class CliAgentHost {
     ];
     const registry = await this.readRegistry();
     const profiles: CliAgentProfile[] = [];
-    for (const candidate of candidates) {
+    const cachedBuiltins = this.builtinProfilesCache;
+    if (cachedBuiltins && Date.now() - cachedBuiltins.at < 30_000) {
+      profiles.push(...cachedBuiltins.profiles.map((profile) => {
+        const saved = registry.authorizations?.[profile.id];
+        return {
+          ...profile,
+          authorizedRoots: saved?.fingerprint === profile.fingerprint ? saved.roots : [],
+        };
+      }));
+    } else for (const candidate of candidates) {
       const executable = (await Promise.all(candidate.paths.map(async (path) => await existsFile(path) ? path : null)))
         .find((path): path is string => !!path);
       if (!executable) {
@@ -442,12 +709,53 @@ export class CliAgentHost {
         defaultModel: catalog.defaultModel,
       });
     }
+    if (!cachedBuiltins || Date.now() - cachedBuiltins.at >= 30_000) {
+      this.builtinProfilesCache = {
+        at: Date.now(),
+        profiles: profiles.map((profile) => ({ ...profile, authorizedRoots: [] })),
+      };
+    }
+    for (const stored of registry.customProfiles ?? []) {
+      const executableExists = isAbsolute(stored.executable) && await existsFile(stored.executable);
+      let fingerprint = '';
+      if (executableExists) {
+        try { fingerprint = await customFingerprint(stored); } catch { /* reported as unavailable below */ }
+      }
+      const saved = registry.authorizations?.[stored.id];
+      const probed = stored.probe?.compatible === true && stored.probeFingerprint === fingerprint;
+      const compatible = stored.enabled && executableExists && !!fingerprint && probed;
+      profiles.push({
+        id: stored.id,
+        kind: 'custom-acp',
+        name: stored.name,
+        executable: executableExists ? stored.executable : '',
+        adapter: 'acp-stdio',
+        version: stored.probe?.version || (stored.probe?.protocolVersion ? `ACP v${stored.probe.protocolVersion}` : ''),
+        compatible,
+        ...(!compatible ? {
+          reason: !stored.enabled
+            ? '已停用'
+            : !executableExists
+              ? '找不到自定义 CLI 可执行文件'
+              : stored.probeFingerprint && stored.probeFingerprint !== fingerprint
+                ? '自定义 CLI 可执行文件或启动配置已变化，需要重新测试 ACP 握手'
+                : stored.probe?.reason || '需要先测试 ACP 握手',
+        } : {}),
+        fingerprint,
+        authorizedRoots: saved?.fingerprint === fingerprint ? saved.roots : [],
+        models: [],
+        args: [...stored.args],
+        envAllowlist: [...stored.envAllowlist],
+        startupTimeoutMs: stored.startupTimeoutMs,
+        supportsHttpMcp: stored.probe?.supportsHttpMcp === true,
+      });
+    }
     return profiles;
   }
 
   async authorize(profileId: string, projectRoot: string, fingerprint: string): Promise<void> {
+    if (!isAbsolute(projectRoot)) throw new Error('Project root must be absolute');
     const root = resolve(projectRoot);
-    if (!isAbsolute(root)) throw new Error('Project root must be absolute');
     const profile = (await this.profiles()).find((item) => item.id === profileId);
     if (!profile?.compatible || profile.fingerprint !== fingerprint) throw new Error('CLI profile changed; refresh and confirm again');
     const registry = await this.readRegistry();
@@ -471,7 +779,9 @@ export class CliAgentHost {
       fingerprint,
       projectRoot: root,
       configDirectory: profile.configDirectory,
-      permission: 'read-only-filesystem-and-cutai-proposals',
+      permission: profile.kind === 'custom-acp'
+        ? 'current-user-process-and-cutai-manual-proposals'
+        : 'read-only-filesystem-and-cutai-proposals',
     });
   }
 
@@ -721,12 +1031,54 @@ export class CliAgentHost {
     });
   }
 
+  private abortSdkRun(runId: string, reason: string, timedOut = false): boolean {
+    const active = this.sdkRuns.get(runId);
+    if (!active) return false;
+    if (timedOut) active.timedOut = true;
+    if (!active.cancelled) {
+      active.cancelled = true;
+      if (active.cliToken) cancelEditorOwner(active.cliToken, reason);
+      if (active.cliToken && !active.tokenRevoked) {
+        revokeWorkspaceCliToken(active.cliToken);
+        active.tokenRevoked = true;
+      }
+      active.controller.abort();
+    }
+    return true;
+  }
+
+  private finishSdkRun(runId: string): void {
+    const active = this.sdkRuns.get(runId);
+    if (!active) return;
+    if (active.cliToken) {
+      if (active.succeeded) releaseEditorOwner(active.cliToken);
+      else cancelEditorOwner(active.cliToken, active.timedOut ? 'CLI Agent run timed out' : 'CLI Agent run failed');
+      if (!active.tokenRevoked) revokeWorkspaceCliToken(active.cliToken);
+    }
+    active.markCompleted();
+    this.sdkRuns.delete(runId);
+  }
+
+  private assertRunCanStart(runId: string): void {
+    if (this.closing) throw new Error('CutAI is closing; new CLI runs are disabled');
+    if (this.sdkRuns.has(runId) || this.processes.has(runId)) {
+      throw new Error(`CLI run ${runId} is already active`);
+    }
+  }
+
   async run(request: CliRunRequest, onEvent?: (event: CliStreamEvent) => void): Promise<CliRunResult> {
+    if (this.closing) throw new Error('CutAI is closing; new CLI runs are disabled');
     const root = resolve(request.projectRoot);
     const profile = (await this.profiles()).find((item) => item.id === request.profileId);
     if (!profile?.compatible || !profile.executable) throw new Error('CLI is unavailable or incompatible');
     if (!profile.authorizedRoots.map((value) => resolve(value)).includes(root)) {
       throw new Error('CLI access to this project has not been authorized');
+    }
+    const runRegistry = await this.readRegistry();
+    const runAuthorization = runRegistry.authorizations?.[profile.id];
+    if (runAuthorization?.fingerprint !== profile.fingerprint
+      || !runAuthorization.roots.map((value) => resolve(value)).includes(root)) {
+      throw new Error('CLI authorization changed before the run started; authorize this project again');
     }
     if (!workspaceProjectMatchesRoot(request.projectId, root)) {
       throw new Error('CLI project id does not match the authorized workspace root');
@@ -735,13 +1087,96 @@ export class CliAgentHost {
     if (this.sdkRuns.has(runId) || this.processes.has(runId)) {
       throw new Error(`CLI run ${runId} is already active`);
     }
-    if (profile.kind === 'claude' || profile.kind === 'codex') {
+    if (profile.kind === 'custom-acp') {
+      const stored = runRegistry.customProfiles?.find((item) => item.id === profile.id);
+      if (!stored) throw new Error('Custom ACP profile no longer exists');
+      const runFingerprint = await customFingerprint(stored);
+      if (
+        !stored.enabled
+        || stored.probe?.compatible !== true
+        || stored.probeFingerprint !== runFingerprint
+        || runFingerprint !== profile.fingerprint
+      ) {
+        throw new Error('Custom ACP profile changed after authorization; test the handshake and authorize it again');
+      }
+      this.assertRunCanStart(runId);
       const controller = new AbortController();
-      this.sdkRuns.set(runId, controller);
-      let timedOut = false;
+      const active = createActiveSdkRun(controller);
+      this.sdkRuns.set(runId, active);
       const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
+        this.abortSdkRun(runId, 'CLI Agent run timed out', true);
+      }, RUN_TIMEOUT_MS);
+      let cliToken: string | undefined;
+      let mcpUrl: string | undefined;
+      if (this.origin && stored.probe.supportsHttpMcp) {
+        cliToken = issueWorkspaceCliToken(request.projectId, {
+          mcpMode: request.planMode ? 'read-only' : 'manual-edit',
+        });
+        active.cliToken = cliToken;
+        mcpUrl = cliAgentMcpUrl(this.origin, cliToken);
+      }
+      const directEdit = request.fileAccess === 'workspace-write';
+      const instruction = `${request.prompt}\n\nCutAI project id: ${request.projectId}. `
+        + (mcpUrl
+          ? 'Use the CutAI MCP tools for timeline operations. Timeline edits require manual review in CutAI. '
+          : 'This ACP Agent does not expose CutAI MCP tools in this run; answer without claiming timeline edits. ')
+        + (directEdit
+          ? 'The user explicitly enabled direct workspace editing. The ACP process still runs with the current operating-system user permissions.'
+          : 'Do not modify project files directly. ACP is a protocol, not an operating-system sandbox.');
+      try {
+        const acpResult = await runAcpStdio({
+          executable: stored.executable,
+          args: stored.args,
+          cwd: root,
+          env: customRuntimeEnv(stored),
+          startupTimeoutMs: stored.startupTimeoutMs,
+          prompt: instruction,
+          mcpUrl,
+          signal: controller.signal,
+          onEvent: (event) => onEvent?.({ runId, ...event }),
+        });
+        const result: CliRunResult = {
+          runId,
+          // Session resume is capability-dependent and is not assumed for a
+          // generic ACP executable. Chat history is bridged by the UI instead.
+          text: acpResult.text,
+          reasoning: acpResult.reasoning,
+          usage: acpResult.usage,
+          exitCode: 0,
+          stderrTail: acpResult.stderrTail,
+          actualModel: acpResult.actualModel,
+        };
+        await this.appendWorkspaceRecord(root, 'sessions', `${profile.id}.jsonl`, {
+          type: 'acp_turn',
+          at: new Date().toISOString(),
+          runId,
+          profileId: profile.id,
+          adapter: profile.adapter,
+          prompt: request.prompt,
+          response: result.text,
+          reasoning: result.reasoning,
+          fileAccess: request.fileAccess ?? 'proposal-only',
+          usage: result.usage,
+        });
+        active.succeeded = true;
+        return result;
+      } catch (error) {
+        const normalized = active.timedOut ? new Error('CLI session timed out') : error;
+        this.abortSdkRun(runId, active.timedOut ? 'CLI Agent run timed out' : 'CLI Agent run failed', active.timedOut);
+        onEvent?.({ runId, type: 'error', message: normalized instanceof Error ? normalized.message : String(normalized) });
+        throw normalized;
+      } finally {
+        clearTimeout(timer);
+        this.finishSdkRun(runId);
+      }
+    }
+    if (profile.kind === 'claude' || profile.kind === 'codex') {
+      this.assertRunCanStart(runId);
+      const controller = new AbortController();
+      const active = createActiveSdkRun(controller);
+      this.sdkRuns.set(runId, active);
+      const timer = setTimeout(() => {
+        this.abortSdkRun(runId, 'CLI Agent run timed out', true);
       }, RUN_TIMEOUT_MS);
       let cliToken: string | undefined;
       let mcp: CliAgentMcpContext | undefined;
@@ -749,6 +1184,7 @@ export class CliAgentHost {
         cliToken = issueWorkspaceCliToken(request.projectId, {
           mcpMode: request.planMode ? 'read-only' : 'manual-edit',
         });
+        active.cliToken = cliToken;
         mcp = { url: cliAgentMcpUrl(this.origin, cliToken) };
       }
       try {
@@ -768,19 +1204,21 @@ export class CliAgentHost {
           fileAccess: request.fileAccess ?? 'proposal-only',
           usage: result.usage,
         });
+        active.succeeded = true;
         return result;
       } catch (error) {
-        const normalized = timedOut ? new Error('CLI session timed out') : error;
+        const normalized = active.timedOut ? new Error('CLI session timed out') : error;
+        this.abortSdkRun(runId, active.timedOut ? 'CLI Agent run timed out' : 'CLI Agent run failed', active.timedOut);
         const message = normalized instanceof Error ? normalized.message : String(normalized);
         onEvent?.({ runId, type: 'error', message });
         throw normalized;
       } finally {
         clearTimeout(timer);
-        this.sdkRuns.delete(runId);
-        if (cliToken) revokeWorkspaceCliToken(cliToken);
+        this.finishSdkRun(runId);
       }
     }
     const args = await this.argsFor(profile, request, runId);
+    this.assertRunCanStart(runId);
     const emit = (event: CliStreamPayload): void => onEvent?.({ runId, ...event });
     return new Promise((resolveRun, reject) => {
       const child = spawn(profile.executable, args, {
@@ -882,12 +1320,7 @@ export class CliAgentHost {
   }
 
   cancel(runId: string): boolean {
-    const sdkRun = this.sdkRuns.get(runId);
-    if (sdkRun) {
-      sdkRun.abort();
-      this.sdkRuns.delete(runId);
-      return true;
-    }
+    if (this.abortSdkRun(runId, 'CLI Agent run was cancelled by the user')) return true;
     const child = this.processes.get(runId);
     if (!child) return false;
     terminateProcessTree(child);
@@ -895,10 +1328,27 @@ export class CliAgentHost {
     return true;
   }
 
-  close(): void {
-    for (const controller of this.sdkRuns.values()) controller.abort();
-    this.sdkRuns.clear();
-    for (const child of this.processes.values()) terminateProcessTree(child);
-    this.processes.clear();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.closePromise = (async () => {
+      const completions = [
+        ...[...this.sdkRuns.values()].map((active) => active.completed),
+        ...[...this.probeRuns.values()].map((active) => active.completed),
+      ];
+      for (const runId of this.sdkRuns.keys()) this.abortSdkRun(runId, 'CutAI is closing');
+      for (const probe of this.probeRuns.values()) probe.controller.abort();
+      for (const child of this.processes.values()) terminateProcessTree(child);
+      this.processes.clear();
+      if (!completions.length) return;
+      await new Promise<void>((resolveClose) => {
+        const timer = setTimeout(resolveClose, 5_000);
+        void Promise.allSettled(completions).then(() => {
+          clearTimeout(timer);
+          resolveClose();
+        });
+      });
+    })();
+    return this.closePromise;
   }
 }

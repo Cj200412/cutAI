@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { replayActions } from '../editor/store';
 import { activeTimeline } from '../editor/types';
 import { INITIAL } from '../editor/initial';
@@ -23,6 +24,16 @@ assert.equal(isExternalEditSessionStale(session, base), false);
 const autoSession = createExternalEditSession(base, 'Codex', 'auto');
 assert.equal(autoSession.approvalMode, 'auto');
 assert.throws(() => createExternalEditSession(base, 'Codex', 'invalid'), /approvalMode/);
+const predeterminedId = randomUUID();
+assert.equal(
+  createExternalEditSession(base, 'Codex', 'manual', predeterminedId).id,
+  predeterminedId,
+  'the server may predetermine a CLI draft id so cancellation can discard an in-flight begin',
+);
+assert.throws(
+  () => createExternalEditSession(base, 'Codex', 'manual', 'not-a-uuid'),
+  /editSessionId/,
+);
 
 const isolatedCall = forkExternalEditSession(session);
 isolatedCall.draft!.commands.setAspect(1080, 1920, 'contain');

@@ -98,7 +98,7 @@ export class ExternalBridgeRuntime {
 
   async execute(name: string, rawArgs: Record<string, unknown>): Promise<unknown> {
     const args = { ...rawArgs };
-    if (name === 'begin_edit_session') return this.begin(args.clientName, args.approvalMode);
+    if (name === 'begin_edit_session') return this.begin(args.clientName, args.approvalMode, args.editSessionId);
     const session = this.requireSession(requiredSessionId(args));
     delete args.editSessionId;
     if (name === 'get_edit_session') return this.info(session);
@@ -158,11 +158,11 @@ export class ExternalBridgeRuntime {
     if (session) await this.complete(session, 'rejected');
   }
 
-  private begin(clientName: unknown, approvalMode: unknown): unknown {
+  private begin(clientName: unknown, approvalMode: unknown, editSessionId: unknown): unknown {
     const active = findActiveSession(this.sessions);
     if (active) throw new Error(`Resolve or discard active edit session ${active.id} first.`);
     const context = this.getContext();
-    const session = createExternalEditSession(context.getDoc(), clientName, approvalMode);
+    const session = createExternalEditSession(context.getDoc(), clientName, approvalMode, editSessionId);
     this.sessions.set(session.id, session);
     return this.info(session);
   }

@@ -50,6 +50,15 @@ function normalizedApprovalMode(value: unknown): ExternalApprovalMode {
   throw new Error('approvalMode must be "manual" or "auto".');
 }
 
+function normalizedSessionId(value: unknown): string {
+  if (value === undefined) return crypto.randomUUID();
+  if (typeof value !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error('editSessionId must be a UUID.');
+  }
+  return value.toLowerCase();
+}
+
 export function isExternalEditSessionStale(session: ExternalEditSession, liveDoc: ProjectDoc): boolean {
   return session.baseRevision !== revisionOf(liveDoc);
 }
@@ -58,10 +67,11 @@ export function createExternalEditSession(
   baseDoc: ProjectDoc,
   clientName?: unknown,
   approvalMode?: unknown,
+  editSessionId?: unknown,
 ): ExternalEditSession {
   const now = Date.now();
   return {
-    id: crypto.randomUUID(),
+    id: normalizedSessionId(editSessionId),
     clientName: normalizedClientName(clientName),
     approvalMode: normalizedApprovalMode(approvalMode),
     status: 'drafting',

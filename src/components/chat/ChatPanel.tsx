@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { theme } from '../../theme';
 import { useT } from '../../i18n/locale';
 import { resolveAgentReferences, type AgentContext, type AgentReference } from '../../agent/context';
@@ -129,7 +129,7 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     changeLog, rollbackChangeSession, canRollbackChangeSession,
   } = useAgent(ctx, projectId);
   const sourceKey = `cutai:agent-source:${projectId}`;
-  const cliChatKey = (profileId: string) => `cutai:cli-chat:${projectId}:${profileId}`;
+  const cliChatKey = useCallback((profileId: string) => `cutai:cli-chat:${projectId}:${profileId}`, [projectId]);
   const [agentSource, setAgentSource] = useState(() => localStorage.getItem(sourceKey) || 'api');
   const [cliProfiles, setCliProfiles] = useState<CliAgentProfileResult[]>([]);
   const [cliMessages, setCliMessages] = useState<DisplayMessage[]>([]);
@@ -208,8 +208,20 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     });
   }), []);
   useEffect(() => {
-    void window.cutaiDesktop?.listCliAgents().then(setCliProfiles).catch(() => setCliProfiles([]));
+    const reload = (): void => {
+      void window.cutaiDesktop?.listCliAgents().then(setCliProfiles).catch(() => setCliProfiles([]));
+    };
+    reload();
+    window.addEventListener('cutai:cli-profiles-changed', reload);
+    return () => window.removeEventListener('cutai:cli-profiles-changed', reload);
   }, []);
+  useEffect(() => {
+    if (agentSource !== 'api' && !cliRunning && cliProfiles.length > 0) {
+      const selected = cliProfiles.find((profile) => profile.id === agentSource);
+      if (selected?.compatible) return;
+      setAgentSource('api');
+    }
+  }, [agentSource, cliProfiles, cliRunning, setAgentSource]);
   useEffect(() => {
     localStorage.setItem(sourceKey, agentSource);
     if (agentSource === 'api') { setCliMessages([]); setCliSessionId(undefined); return; }
@@ -224,15 +236,15 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
       setCliMessages([]);
       setCliSessionId(undefined);
     }
-  }, [agentSource, sourceKey]);
+  }, [agentSource, sourceKey, cliChatKey]);
   useEffect(() => {
     if (agentSource === 'api' || cliRunning) return;
     localStorage.setItem(cliChatKey(agentSource), JSON.stringify({ messages: cliMessages, sessionId: cliSessionId }));
-  }, [agentSource, cliMessages, cliSessionId, cliRunning]);
+  }, [agentSource, cliMessages, cliSessionId, cliRunning, cliChatKey]);
   const sendCli = async (text: string, references: AgentReference[] = []): Promise<void> => {
     const desktop = window.cutaiDesktop;
     const profile = cliProfiles.find((item) => item.id === agentSource);
-    if (!desktop || !profile) {
+    if (!desktop || !profile || !profile.compatible) {
       setCliMessages((current) => [...current, { role: 'error', text: t('CLI Agent 不可用') }]);
       return;
     }
@@ -244,21 +256,45 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
       return;
     }
     let liveProfile = profile;
-    if (!profile.authorizedRoots.includes(projectRoot)) {
-      const approved = window.confirm([
-        t('首次启用本地 CLI Agent，需要授权只读访问当前工程。'),
-        '',
-        `${t('Agent')}：${profile.name} ${profile.version}`,
-        `${t('可执行文件')}：${profile.executable}`,
-        `${t('配置目录')}：${profile.configDirectory || '-'}`,
-        `${t('工程目录')}：${projectRoot}`,
-        t('权限：读取工程文件；禁止直接写源素材和 .cutai；时间线编辑必须通过 CutAI 提案确认。'),
-      ].join('\n'));
-      if (!approved) return;
-      await desktop.authorizeCliAgent(profile.id, projectRoot, profile.fingerprint);
-      const refreshed = await desktop.listCliAgents();
-      setCliProfiles(refreshed);
-      liveProfile = refreshed.find((item) => item.id === profile.id) ?? profile;
+    try {
+      if (!profile.authorizedRoots.includes(projectRoot)) {
+        const approvalLines = profile.kind === 'custom-acp' ? [
+          '首次启用自定义 ACP CLI，需要明确授权当前工程。',
+          '',
+          `Agent：${profile.name} ${profile.version}`,
+          `协议：ACP v1 / stdio`,
+          `可执行文件：${profile.executable}`,
+          `启动参数：${(profile.args ?? []).join(' ') || '-'}`,
+          `额外继承环境变量：${(profile.envAllowlist ?? []).join(', ') || '无'}`,
+          `工程目录：${projectRoot}`,
+          '',
+          '重要：ACP 是协议，不是操作系统沙箱。此进程以当前用户权限运行，理论上可访问工程外文件。CutAI 时间线编辑会被强制限制为人工审核提案。',
+        ] : [
+          t('首次启用本地 CLI Agent，需要授权只读访问当前工程。'),
+          '',
+          `${t('Agent')}：${profile.name} ${profile.version}`,
+          `${t('可执行文件')}：${profile.executable}`,
+          `${t('配置目录')}：${profile.configDirectory || '-'}`,
+          `${t('工程目录')}：${projectRoot}`,
+          t('权限：读取工程文件；禁止直接写源素材和 .cutai；时间线编辑必须通过 CutAI 提案确认。'),
+        ];
+        const approved = window.confirm(approvalLines.join('\n'));
+        if (!approved) return;
+        await desktop.authorizeCliAgent(profile.id, projectRoot, profile.fingerprint);
+        const refreshed = await desktop.listCliAgents();
+        setCliProfiles(refreshed);
+        const refreshedProfile = refreshed.find((item) => item.id === profile.id);
+        if (!refreshedProfile?.compatible || !refreshedProfile.authorizedRoots.includes(projectRoot)) {
+          throw new Error('CLI 配置已变化，请重新测试并授权后再试');
+        }
+        liveProfile = refreshedProfile;
+      }
+    } catch (error) {
+      setCliMessages((current) => [...current, { role: 'user', text }, {
+        role: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      }]);
+      return;
     }
     const runId = crypto.randomUUID();
     cliRunIdRef.current = runId;
@@ -274,12 +310,15 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
       const prompt = contextEntries.length
         ? `${text}\n\n<chat_context_entries>\n${JSON.stringify(contextEntries)}\n</chat_context_entries>`
         : text;
-      const model = localStorage.getItem(`cutai:cli-model:${projectId}:${liveProfile.id}`) || liveProfile.defaultModel;
+      const model = liveProfile.kind === 'custom-acp'
+        ? undefined
+        : localStorage.getItem(`cutai:cli-model:${projectId}:${liveProfile.id}`) || liveProfile.defaultModel;
       const sessionModelKey = `cutai:cli-session-model:${projectId}:${liveProfile.id}`;
       const sessionModel = localStorage.getItem(sessionModelKey);
       const modelChanged = Boolean(cliSessionId && sessionModel && sessionModel !== model);
       const canSwitchModelInSession = liveProfile.kind === 'claude';
-      const conversationBridge = modelChanged && !canSwitchModelInSession
+      const customAcpNeedsContext = liveProfile.kind === 'custom-acp' && cliMessages.length > 0;
+      const conversationBridge = (customAcpNeedsContext || (modelChanged && !canSwitchModelInSession))
         ? cliMessages
           .filter((message) => message.role === 'user' || message.role === 'assistant')
           .slice(-12)
@@ -290,8 +329,10 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         ? `<conversation_context_from_previous_model>\n${conversationBridge}\n</conversation_context_from_previous_model>\n\n${prompt}`
         : prompt;
       const selectedModel = liveProfile.models.find((item) => item.id === model);
-      const reasoningEffort = localStorage.getItem(`cutai:cli-effort:${projectId}:${liveProfile.id}`)
-        || selectedModel?.defaultReasoningEffort;
+      const reasoningEffort = liveProfile.kind === 'custom-acp'
+        ? undefined
+        : localStorage.getItem(`cutai:cli-effort:${projectId}:${liveProfile.id}`)
+          || selectedModel?.defaultReasoningEffort;
       const agentSettings = loadAgentSettings();
       const selectedFileAccess = localStorage.getItem(`cutai:cli-file-access:${projectId}:${liveProfile.id}`) === 'workspace-write'
         ? 'workspace-write' as const
@@ -305,7 +346,7 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
         prompt: effectivePrompt,
         // Claude Agent SDK accepts a model override while resuming the same
         // session. Codex threads remain model-bound and use the context bridge.
-        ...(cliSessionId && (sessionModel === model || canSwitchModelInSession) ? { sessionId: cliSessionId } : {}),
+        ...(liveProfile.kind !== 'custom-acp' && cliSessionId && (sessionModel === model || canSwitchModelInSession) ? { sessionId: cliSessionId } : {}),
         ...(model ? { model } : {}),
         ...(modelChanged && canSwitchModelInSession ? { forkSession: true } : {}),
         ...(reasoningEffort ? { reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
@@ -349,14 +390,14 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
     }
   };
   const messages = agentSource === 'api' ? apiMessages : cliMessages;
-  const running = agentSource === 'api' ? apiRunning : cliRunning;
+  const running = apiRunning || cliRunning;
   const send = (text: string, options?: { askOnly?: boolean; references?: AgentReference[] }): void => {
     if (agentSource === 'api') sendApi(text, options);
     else void sendCli(text, options?.references);
   };
   const stop = (): void => {
-    if (agentSource === 'api') stopApi();
-    else if (cliRunId) void window.cutaiDesktop?.cancelCliAgent(cliRunId);
+    if (cliRunId) void window.cutaiDesktop?.cancelCliAgent(cliRunId);
+    else if (apiRunning) stopApi();
   };
   const clearHistory = (): void => {
     if (agentSource === 'api') clearApiHistory();
@@ -728,6 +769,7 @@ export function ChatPanel({ ctx, projectId, projectRoot, collapsed, onToggleColl
           taRef={taRef}
           agentSource={agentSource}
           cliProfiles={cliProfiles}
+          onCliProfilesChanged={setCliProfiles}
           projectRoot={projectRoot}
           projectId={projectId}
           onAgentSourceChange={setAgentSource}

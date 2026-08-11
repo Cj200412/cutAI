@@ -212,7 +212,13 @@ async function callControlTool(
   return undefined;
 }
 
-async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToken?: string): Promise<unknown> {
+async function callTool(
+  name: string,
+  rawArgs: unknown,
+  baseUrl: string,
+  cliToken?: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
   const args = rawArgs && typeof rawArgs === 'object'
     ? { ...(rawArgs as Record<string, unknown>) }
     : {};
@@ -225,6 +231,10 @@ async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToke
       throw new Error('Local CLI Agent edits require approvalMode manual and user review in CutAI');
     }
     if (args.approvalMode === undefined) args.approvalMode = 'manual';
+    // Predetermine the isolated draft id before dispatch. If the CLI run is
+    // cancelled while begin_edit_session is executing, the broker can enqueue
+    // an idempotent discard without waiting for the begin result to come back.
+    args.editSessionId = randomUUID();
   }
   const control = await callControlTool(name, args, baseUrl, cliToken);
   if (control !== undefined) return control;
@@ -241,7 +251,10 @@ async function callTool(name: string, rawArgs: unknown, baseUrl: string, cliToke
     const requested = Number(args.timeoutSeconds);
     args.timeoutSeconds = Math.min(45, requested > 0 ? requested : 45);
   }
-  return invokeEditorTool(projectId, name, args);
+  return invokeEditorTool(projectId, name, args, {
+    signal,
+    ...(cliToken ? { ownerId: cliToken } : {}),
+  });
 }
 
 function makeServer(baseUrl: string, cliToken?: string): Server {
@@ -273,9 +286,15 @@ function makeServer(baseUrl: string, cliToken?: string): Server {
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpTools(cliToken) }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
-      const result = await callTool(request.params.name, request.params.arguments, baseUrl, cliToken);
+      const result = await callTool(
+        request.params.name,
+        request.params.arguments,
+        baseUrl,
+        cliToken,
+        extra.signal,
+      );
       return {
         content: toMcpContent(result),
         structuredContent: toStructuredContent(result),

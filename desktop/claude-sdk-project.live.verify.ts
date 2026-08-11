@@ -81,4 +81,4 @@ const recovery = await host.run({
 assert.match(recovery.text, new RegExp(recoveryExpected));
 assert.equal((await readFile(join(projectRoot, proofName), 'utf8')).trim(), recoveryExpected);
 console.log('claude-sdk-project.live.verify: cancel and recovery ok');
-host.close();
+await host.close();

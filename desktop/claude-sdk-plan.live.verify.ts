@@ -28,5 +28,5 @@ try {
   assert.equal(await readFile(join(projectRoot, proofName), 'utf8'), before, 'plan mode modified a file');
   console.log('claude-sdk-plan.live.verify: ok');
 } finally {
-  host.close();
+  await host.close();
 }

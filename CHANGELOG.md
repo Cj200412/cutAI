@@ -12,8 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - Added same-kind timeline track header dragging with an insertion guide, plus a documented, rollback-safe migration path toward an MLT/`melt` CLI backend.
   时间线轨道头新增同类型上下拖动与插入指示线，并补充了可回滚的 MLT/`melt` CLI 后端渐进迁移方案。
-- Connected desktop Claude/Codex CLI Agent sessions to the project-scoped CutAI MCP bridge using short-lived workspace tokens and an environment-variable allowlist.
-  桌面 Claude/Codex CLI Agent 现通过项目级短期令牌连接 CutAI MCP，并仅继承白名单环境变量。
+- Connected desktop Claude/Codex CLI Agent sessions to the project-scoped CutAI MCP bridge using short-lived workspace tokens and an environment-variable allowlist. Added persisted custom ACP stdio CLI profiles with create/edit/delete, protocol probing, authorization revocation, and a dedicated desktop management dialog.
+  桌面 Claude/Codex CLI Agent 现通过项目级短期令牌连接 CutAI MCP，并仅继承白名单环境变量；同时新增可持久化的自定义 ACP stdio CLI，可新增、编辑、删除、测试协议、撤销授权，并提供独立桌面管理窗口。
+- Added `NeutralTimelineV1` as a versioned, frame-based interchange boundary and a probe-only MLT/`melt` backend endpoint. The probe uses fixed arguments and reports discovered codecs as unverified candidates; it cannot be selected for export until a real render path is implemented and verified.
+  新增版本化、基于帧的 `NeutralTimelineV1` 交换边界，以及只探测不渲染的 MLT/`melt` 后端接口；探针仅执行固定参数，发现的硬件编码器只标记为未验证候选，在真实渲染链实现并验证前不能用于导出。
 - Added shared local performance controls for per-task CPU budgets, server background-media concurrency, serialized browser-side model work, and automatic GPU acceleration across supported transcription, analysis, transcoding, and rendering paths.
   新增统一的本机性能设置，可限制单任务 CPU、控制服务端后台媒体任务并发、串行浏览器侧模型任务，并为支持的转写、分析、转码与渲染路径自动启用可用的显卡加速。
 - Added explicit AI tool-result states and allowlisted media previews, plus selection-accurate proposal previews so failed or unchecked output is no longer shown as completed work.
@@ -31,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed / 修复
 
+- Fixed CLI Agent cancellation and timeout leaving queued MCP calls alive or isolated edit drafts behind. Cancelled in-flight results are now safely absorbed, queued work is removed, and the associated draft is discarded without applying it to the live timeline.
+  修复 CLI Agent 取消或超时后，MCP 排队调用仍会继续执行、隔离编辑草稿残留的问题；现在会移除未派发任务、安全吸收已取消调用的迟到结果，并丢弃本轮草稿而不改动正式时间线。
 - Fixed manual clip drags creating accidental same-track overlaps, first-time legacy MG lane promotion leaving overlays below main video, and Agent pool-media inserts dropping ripple or inserting inside an existing clip.
   修复手工拖动片段意外产生同轨重叠、旧 MG 轨首次升级后仍位于主视频下方，以及 Agent 素材池插入丢失波纹参数或落在既有片段内部的问题。
 - Fixed Local Whisper silently treating recognized text without timestamps as an empty successful transcript, overlapping missing-timestamp chunks, and ignoring punctuation boundaries inside an adaptive window. Local decoding and inference now share one bounded queue, GPU-off is respected, and automatic WebGPU inference failures retry once on WASM.

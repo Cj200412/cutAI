@@ -30,5 +30,5 @@ for (const profile of refreshed.filter((item) => item.compatible)) {
 const audit = await readFile(join(workspace, '.cutai', 'audit', 'cli-authorizations.jsonl'), 'utf8');
 assert.match(audit, /read-only-filesystem-and-cutai-proposals/);
 assert.doesNotMatch(audit, /API_KEY|TOKEN/);
-host.close();
+await host.close();
 console.log('cli-agent.verify: ok');

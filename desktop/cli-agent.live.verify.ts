@@ -44,4 +44,4 @@ for (const profile of profiles) {
   assert.equal((await readFile(join(root, proofName), 'utf8')).trim(), 'DIRECT_EDIT_OK');
   console.log(`cli-agent.live.verify: ${profile.kind} ok (${result.sessionId})`);
 }
-host.close();
+await host.close();

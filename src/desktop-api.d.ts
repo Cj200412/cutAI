@@ -14,6 +14,12 @@ declare global {
       saveWorkspace(path: string, document: unknown): Promise<{ rootPath: string; manifest: WorkspaceManifestResult }>;
       rescanWorkspace(path: string): Promise<WorkspaceMediaResult[]>;
       listCliAgents(): Promise<CliAgentProfileResult[]>;
+      chooseCliExecutable(): Promise<string | null>;
+      createCliAgent(input: CustomCliAgentInputResult): Promise<CliAgentProfileResult>;
+      updateCliAgent(profileId: string, input: CustomCliAgentInputResult): Promise<CliAgentProfileResult>;
+      deleteCliAgent(profileId: string): Promise<{ deleted: boolean }>;
+      probeCliAgent(profileId: string): Promise<CliAgentProfileResult>;
+      revokeCliAgent(profileId: string, rootPath: string): Promise<{ revoked: boolean }>;
       authorizeCliAgent(profileId: string, rootPath: string, fingerprint: string): Promise<{ authorized: boolean }>;
       runCliAgent(request: CliRunRequest): Promise<CliRunResult>;
       onCliAgentEvent(listener: (event: CliStreamEvent) => void): () => void;
@@ -63,6 +69,19 @@ declare global {
     authorizedRoots: string[];
     models: Array<{ id: string; label: string; reasoningEfforts: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>; defaultReasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' }>;
     defaultModel?: string;
+    args?: string[];
+    envAllowlist?: string[];
+    startupTimeoutMs?: number;
+    supportsHttpMcp?: boolean;
+  }
+
+  interface CustomCliAgentInputResult {
+    name: string;
+    executable: string;
+    args?: string[];
+    envAllowlist?: string[];
+    startupTimeoutMs?: number;
+    enabled?: boolean;
   }
 
   interface CliRunRequest {

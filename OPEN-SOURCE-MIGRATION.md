@@ -1,20 +1,29 @@
 # CutAI 开源底座与 CLI Agent 渐进迁移
 
-## 本轮默认方案（待用户确认）
+## 本轮采用的方案
 
 不在现有分支原地删除并替换全部源码。当前工程已经包含时间线、工程迁移、撤销/重做、字幕、MG、Agent 工具、MCP、预览和导出链；一次性覆盖会同时失去可用功能和回滚路径。
 
-默认采用可验证的渐进路线：
+在约定等待时间内没有收到相反选择，因此本轮按推荐项采用可验证的渐进路线：
 
 ```text
-Claude / Codex CLI
-        ↓ MCP（项目绑定、提案、审核、撤销）
-当前 ExternalBridgeRuntime → EditorCore / Remotion
-        ↓ 未来抽取 EditorPort（稳定边界）
-未来 MLT XML + melt CLI 适配器
+Claude / Codex CLI ─┐
+自定义 ACP stdio ───┴→ CliAgentHost → 短期项目令牌 → MCP
+                                                ↓
+                              ExternalBridgeRuntime → EditorCore / Remotion
+                                                ↓
+                                      NeutralTimelineV1
+                                                ↓
+                                  未来 MLT XML → melt CLI
 ```
 
-本轮已完成第一层：桌面 CLI Agent 会获得项目级短期 MCP 地址，通过 MCP 调用当前编辑器工具；令牌强制绑定当前工程，CLI 结束即撤销。CLI 子进程仅继承白名单环境变量。普通工程文件以工程根目录为工作目录，并受提示词限制；当前 `workspace-write` 不是操作系统级根目录沙箱，不能把这项提示约束描述成强制隔离。
+本轮已经完成 CLI 与后端替换的第一层边界：
+
+- 桌面端支持 Claude、Codex，以及用户登记的 ACP stdio CLI；自定义 CLI 会先完成 ACP v1 `initialize` 握手，只有明确报告 HTTP MCP 能力时才获得 CutAI MCP 地址。
+- MCP 令牌强制绑定当前工程和本轮权限；计划模式只读，编辑模式强制形成手动提案，不能由 CLI 绕过界面自动应用。
+- 取消、超时或异常退出会撤销令牌、取消尚未派发的编辑调用，并清理本轮隔离草稿；正常完成则保留提案供用户审核。
+- CLI 子进程仅继承允许的环境变量。普通工程文件以工程根目录为工作目录，并受提示词限制；ACP 是通信协议而不是沙箱，自定义 CLI 仍以当前 Windows 用户权限运行，`workspace-write` 也不是操作系统级根目录隔离。命令参数会以明文保存在本机配置中，不应把密钥写入参数。
+- 已加入版本化 `NeutralTimelineV1` 转换和只读 MLT 探针接口；探针不会执行用户提供的命令，也不会把“列出硬件编码器”误报成真实 GPU 渲染成功。现有导出仍使用 Remotion。
 
 ## 为什么不直接覆盖为 OpenCut
 
@@ -30,24 +39,29 @@ Claude / Codex CLI
 - MLT / melt：https://www.mltframework.org/docs/melt/
 - MLT XML：https://www.mltframework.org/docs/mltxml/
 - MLT 许可证说明：https://www.mltframework.org/docs/copyrightpolicy/
+- Agent Client Protocol：https://agentclientprotocol.com/
+- ACP TypeScript SDK：https://github.com/agentclientprotocol/typescript-sdk
 
 ## 推荐迁移阶段
 
 ### 阶段 0：稳定 Agent 边界（本轮）
 
-- CLI 不直接依赖某个编辑器工程 JSON。
-- 时间线修改固定走 `CLI → MCP → 编辑会话 → 用户审核/应用`。
-- MCP 令牌绑定当前工程并在运行结束后撤销。
-- CLI 子进程只继承白名单环境变量。
+- [x] CLI 不直接依赖某个编辑器工程 JSON。
+- [x] 时间线修改固定走 `CLI → MCP → 编辑会话 → 用户审核/应用`。
+- [x] MCP 令牌绑定当前工程和权限，并在运行结束、取消或超时后撤销。
+- [x] CLI 子进程只继承白名单环境变量。
+- [x] 自定义 ACP CLI 支持新增、编辑、删除、握手测试、授权撤销和持久化；配置变化会使旧授权失效。
+- [x] 取消链覆盖 CLI、MCP broker 和隔离编辑会话，不再让已超时的排队调用稍后复活。
 
 ### 阶段 1：中立时间线与 MLT 探针
 
-- 在独立分支 `rewrite/mlt-cli` 开发，不覆盖当前可用分支。
-- 定义中立时间线：轨道、片段、字幕、音频、转场、MG 占位、素材引用和帧率。
-- 实现 `.cutai → 中立时间线 → MLT XML` 只读转换。
-- 增加受控探针检查 `melt` 路径、版本、模块和硬件编码器；禁止 Agent 自由拼接 shell 命令。
+- [x] 定义版本化中立时间线：轨道、片段、字幕、音频、转场、MG 占位、素材引用、帧率和不支持能力的显式诊断。
+- [x] 实现当前时间线状态到 `NeutralTimelineV1` 的只读转换。
+- [x] 增加 `GET /api/export/backends/mlt/probe`，只使用固定参数检查 `melt` 路径、版本、模块和硬件编码器；禁止调用方拼接 shell 命令。
+- [ ] 实现 `NeutralTimelineV1 → MLT XML`、真实素材路径解析、进度、取消和渲染错误映射。
+- [ ] 用真实媒体验证 CPU/GPU 编码后，才允许把 MLT 设为可选导出后端。
 
-当前开发机检查结果：未发现 `melt`，因此本轮没有伪造 MLT 实机渲染通过。
+当前开发机的真实探针结果为 `availability: not-found`；接口因此保持 `selectableForExport: false`、`renderVerified: false`，本轮没有声称 MLT 实机渲染通过。
 
 ### 阶段 2：双后端验证
 

@@ -7,6 +7,7 @@ import type { Plugin } from 'vite';
 import { projectStorePlugin } from './project-store.ts';
 import { extensionStorePlugin } from './extension-store.ts';
 import { exportPlugin } from './export.ts';
+import { exportBackendsPlugin } from './export-backends.ts';
 import { exportQaPlugin } from './export-qa.ts';
 import { uploadPlugin } from './upload.ts';
 import { mobileUploadPlugin } from './mobile-upload.ts';
@@ -36,7 +37,7 @@ import { localModelAssetsPlugin } from './local-model-assets.ts';
 import { getKey } from '../keystore.ts';
 
 export function serverPlugins(): Plugin[] {
-  return [llmProxyPlugin(), transcriptionCompatiblePlugin(), localModelAssetsPlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
+  return [llmProxyPlugin(), transcriptionCompatiblePlugin(), localModelAssetsPlugin(), projectStorePlugin(), extensionStorePlugin(), externalAgentPlugin(), settingsPlugin(), exportBackendsPlugin(), exportPlugin(), exportQaPlugin(), uploadMultipartPlugin(), uploadPlugin(), mobileUploadPlugin(), extractAudioPlugin(), extractFramesPlugin(), sceneDetectionPlugin(), autoGradePlugin(), mediaPreviewPlugin(), isolateVoicePlugin(), normalizeMediaPlugin(), imageGenerationPlugin({
     get baseUrl() { return getKey('IMAGE_BASE_URL') || 'https://api.openai.com'; },
     get apiKey() { return getKey('IMAGE_API_KEY') || getKey('OPENAI_API_KEY'); },
     get model() { return getKey('IMAGE_MODEL') || 'gpt-image-2'; },

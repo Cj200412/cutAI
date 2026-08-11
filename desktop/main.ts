@@ -14,7 +14,7 @@ import {
   rescanWorkspace,
   saveWorkspaceProject,
 } from './workspace-project.ts';
-import { CliAgentHost, type CliRunRequest } from './cli-agent.ts';
+import { CliAgentHost, type CliRunRequest, type CustomCliAgentInput } from './cli-agent.ts';
 
 // Electron 主进程入口。dev 形态:esbuild 打到 desktop-dist/main.mjs,dist/ 在仓库根;
 // 打包形态:dist/、remotion-bundle、chrome-headless-shell 走 extraResources。
@@ -38,6 +38,28 @@ function isProjectDocument(value: unknown): value is Record<string, unknown> {
     && Array.isArray(doc.mediaFolders)
     && Array.isArray(doc.timelines)
     && typeof doc.activeTimelineId === 'string';
+}
+
+function customCliInput(value: unknown): CustomCliAgentInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid custom CLI profile');
+  const row = value as Record<string, unknown>;
+  if (typeof row.name !== 'string' || typeof row.executable !== 'string') {
+    throw new Error('Invalid custom CLI profile');
+  }
+  const args = row.args === undefined ? [] : row.args;
+  const envAllowlist = row.envAllowlist === undefined ? [] : row.envAllowlist;
+  if (!Array.isArray(args) || !args.every((item) => typeof item === 'string')
+    || !Array.isArray(envAllowlist) || !envAllowlist.every((item) => typeof item === 'string')) {
+    throw new Error('Invalid custom CLI arguments or environment allowlist');
+  }
+  return {
+    name: row.name,
+    executable: row.executable,
+    args,
+    envAllowlist,
+    ...(typeof row.startupTimeoutMs === 'number' ? { startupTimeoutMs: row.startupTimeoutMs } : {}),
+    ...(typeof row.enabled === 'boolean' ? { enabled: row.enabled } : {}),
+  };
 }
 
 function registerDesktopHandlers(secrets: CutaiSecretStore, cliAgents: CliAgentHost): void {
@@ -65,7 +87,10 @@ function registerDesktopHandlers(secrets: CutaiSecretStore, cliAgents: CliAgentH
   ipcMain.handle('cutai:choose-project-save-path', async (event, requestedName: unknown) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const rawName = typeof requestedName === 'string' ? requestedName.trim() : 'Untitled';
-    const safeName = rawName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').slice(0, 120) || 'Untitled';
+    const safeName = [...rawName.replace(/[<>:"/\\|?*]/g, '_')]
+      .map((character) => character.charCodeAt(0) < 32 ? '_' : character)
+      .join('')
+      .slice(0, 120) || 'Untitled';
     const dialogParent = parent ?? BrowserWindow.getFocusedWindow();
     const result = dialogParent
       ? await dialog.showSaveDialog(dialogParent, {
@@ -141,6 +166,39 @@ function registerDesktopHandlers(secrets: CutaiSecretStore, cliAgents: CliAgentH
     return rescanWorkspace(requestedPath);
   });
   ipcMain.handle('cutai:cli-profiles', async () => cliAgents.profiles());
+  ipcMain.handle('cutai:cli-choose-executable', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const options: OpenDialogOptions = {
+      title: '选择 ACP CLI 可执行文件',
+      properties: ['openFile'],
+      filters: process.platform === 'win32'
+        ? [{ name: '可执行文件', extensions: ['exe', 'com'] }, { name: '所有文件', extensions: ['*'] }]
+        : [{ name: '所有文件', extensions: ['*'] }],
+    };
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle('cutai:cli-create', async (_event, input: unknown) => (
+    cliAgents.createCustomProfile(customCliInput(input))
+  ));
+  ipcMain.handle('cutai:cli-update', async (_event, profileId: unknown, input: unknown) => {
+    if (typeof profileId !== 'string') throw new Error('Invalid custom CLI profile id');
+    return cliAgents.updateCustomProfile(profileId, customCliInput(input));
+  });
+  ipcMain.handle('cutai:cli-delete', async (_event, profileId: unknown) => {
+    if (typeof profileId !== 'string') throw new Error('Invalid custom CLI profile id');
+    await cliAgents.deleteCustomProfile(profileId);
+    return { deleted: true };
+  });
+  ipcMain.handle('cutai:cli-probe', async (_event, profileId: unknown) => {
+    if (typeof profileId !== 'string') throw new Error('Invalid custom CLI profile id');
+    return cliAgents.probeCustomProfile(profileId);
+  });
+  ipcMain.handle('cutai:cli-revoke', async (_event, profileId: unknown, rootPath: unknown) => {
+    if (typeof profileId !== 'string' || typeof rootPath !== 'string') throw new Error('Invalid CLI authorization revoke request');
+    await cliAgents.revoke(profileId, rootPath);
+    return { revoked: true };
+  });
   ipcMain.handle('cutai:cli-authorize', async (_event, profileId: unknown, rootPath: unknown, fingerprint: unknown) => {
     if (typeof profileId !== 'string' || typeof rootPath !== 'string' || typeof fingerprint !== 'string') {
       throw new Error('Invalid CLI authorization request');
@@ -234,6 +292,41 @@ async function smokeProbe(origin: string, win: BrowserWindow): Promise<void> {
     })()`) as unknown;
     if (workspaceRoundTrip !== true) throw new Error('desktop workspace project IPC round-trip failed');
     console.log('[smoke] workspace project IPC round-trip ok');
+    const fixturePath = join(fileURLToPath(new URL('..', import.meta.url)), 'desktop', 'fixtures', 'fake-acp-agent.mjs');
+    const nodeExecutable = process.env.npm_node_execpath || process.execPath;
+    const electronAsNode = !process.env.npm_node_execpath;
+    if (electronAsNode) process.env.ELECTRON_RUN_AS_NODE = '1';
+    try {
+      const customCliRoundTrip = await win.webContents.executeJavaScript(`(async () => {
+        let profileId = '';
+        try {
+          const created = await window.cutaiDesktop.createCliAgent({
+            name: 'Desktop smoke ACP',
+            executable: ${JSON.stringify(nodeExecutable)},
+            args: [${JSON.stringify(fixturePath)}, 'expect-mcp'],
+            envAllowlist: ${JSON.stringify(electronAsNode ? ['ELECTRON_RUN_AS_NODE'] : [])},
+            startupTimeoutMs: 5000,
+          });
+          profileId = created.id;
+          const probed = await window.cutaiDesktop.probeCliAgent(profileId);
+          if (!probed.compatible || !probed.supportsHttpMcp) return false;
+          await window.cutaiDesktop.authorizeCliAgent(profileId, ${JSON.stringify(workspacePath)}, probed.fingerprint);
+          const run = await window.cutaiDesktop.runCliAgent({
+            profileId,
+            projectId: 'desktop-smoke-workspace',
+            projectRoot: ${JSON.stringify(workspacePath)},
+            prompt: 'smoke',
+          });
+          return run.text === '你好，权限已拒绝。';
+        } finally {
+          if (profileId) await window.cutaiDesktop.deleteCliAgent(profileId);
+        }
+      })()`) as unknown;
+      if (customCliRoundTrip !== true) throw new Error('desktop custom ACP create/probe/authorize/run/delete failed');
+      console.log('[smoke] custom ACP CLI lifecycle ok');
+    } finally {
+      if (electronAsNode) delete process.env.ELECTRON_RUN_AS_NODE;
+    }
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }
@@ -268,6 +361,18 @@ async function boot(): Promise<void> {
   const userDataPath = app.getPath('userData');
   const secrets = new CutaiSecretStore(join(userDataPath, 'secrets.json'), safeStorage);
   const cliAgents = new CliAgentHost(userDataPath);
+  let shutdownStarted = false;
+  let shutdownCompleted = false;
+  app.on('before-quit', (event) => {
+    if (shutdownCompleted) return;
+    event.preventDefault();
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    void cliAgents.close().finally(() => {
+      shutdownCompleted = true;
+      app.exit(0);
+    });
+  });
   registerDesktopHandlers(secrets, cliAgents);
   if (app.isPackaged) {
     await preparePackagedRuntime({
@@ -304,7 +409,6 @@ async function boot(): Promise<void> {
     console.log('SMOKE-OK');
     app.exit(0);
   }
-  app.once('before-quit', () => cliAgents.close());
 }
 
 app.on('window-all-closed', () => app.quit());

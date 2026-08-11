@@ -11,7 +11,13 @@ import {
   revokeWorkspaceCliToken,
 } from '../../desktop/workspace-project.ts';
 import { externalAgentRequestAuthorized } from '../plugins/external-agent.ts';
-import { nextEditorCall, registerEditor, settleEditorCall } from './broker.ts';
+import {
+  isProjectConnected,
+  nextEditorCall,
+  registerEditor,
+  releaseEditorOwner,
+  settleEditorCall,
+} from './broker.ts';
 import { handleMcpRequest } from './mcp.ts';
 
 async function listen(server: Server): Promise<number> {
@@ -128,7 +134,15 @@ try {
   const manualQueued = await nextEditorCall(projectA, 'editor-a', AbortSignal.timeout(2_000));
   assert.equal(manualQueued?.name, 'begin_edit_session');
   assert.equal(manualQueued?.arguments.approvalMode, 'manual', 'omitted CLI approval mode is forced to manual');
-  assert.equal(settleEditorCall(manualQueued!.id, true, { approvalMode: 'manual' }), true);
+  assert.match(
+    String(manualQueued?.arguments.editSessionId),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    'the server predetermines the isolated draft id before dispatch',
+  );
+  assert.equal(settleEditorCall(manualQueued!.id, true, {
+    approvalMode: 'manual',
+    editSessionId: manualQueued!.arguments.editSessionId,
+  }), true);
   assert.equal((await manualSessionPromise).isError, undefined);
 
   const validCallPromise = client.callTool({ name: 'bound_project_a_check', arguments: { value: 7 } });
@@ -138,6 +152,29 @@ try {
   const validResult = await validCallPromise;
   assert.equal(validResult.isError, undefined);
   assert.equal((validResult.structuredContent as { projectId?: unknown }).projectId, projectA);
+
+  const callAbort = new AbortController();
+  const abortedCallPromise = client.callTool(
+    { name: 'bound_project_a_check', arguments: { cancellationProbe: true } },
+    undefined,
+    { signal: callAbort.signal },
+  );
+  const abortedCall = await nextEditorCall(projectA, 'editor-a', AbortSignal.timeout(2_000));
+  assert.equal(abortedCall?.name, 'bound_project_a_check');
+  callAbort.abort();
+  await assert.rejects(
+    abortedCallPromise,
+    (error: unknown) => error instanceof Error && /AbortError|aborted/i.test(`${error.name}: ${error.message}`),
+  );
+  for (let attempt = 0; attempt < 20 && isProjectConnected(projectA, Date.now() + 60_000); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(
+    isProjectConnected(projectA, Date.now() + 60_000),
+    false,
+    'MCP RequestHandlerExtra.signal cancels the dispatched broker call instead of leaving it active',
+  );
+  assert.equal(settleEditorCall(abortedCall!.id, true, { late: true }), true);
 
   const planTools = (await planClient.listTools()).tools.map((tool) => tool.name);
   assert.ok(planTools.includes('openchatcut_status'));
@@ -158,6 +195,8 @@ try {
   await client.close();
   await planClient.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  releaseEditorOwner(cliToken);
+  releaseEditorOwner(planToken);
   revokeWorkspaceCliToken(cliToken);
   revokeWorkspaceCliToken(planToken);
   await rm(rootA, { recursive: true, force: true });
