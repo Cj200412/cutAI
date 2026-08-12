@@ -10,6 +10,7 @@ import { useT } from '../i18n/locale';
 import { Icon, type IconName } from '../components/icons';
 import { captionTrackEntries, timelineDuration, trackAlias, type TimelineState } from '../editor/types';
 import { timelineToFcpxml } from './fcpxml';
+import { toNeutralTimeline } from './toNeutralTimeline';
 import { exportMediaDir } from './mediaDir';
 import { captionsToSrt, captionsToTxt } from '../captions/exportCaptions';
 import { exportClipMov, renderClipMovBlob } from '../media/clipExport';
@@ -55,7 +56,19 @@ const RESOLUTIONS = Object.keys(EXPORT_RESOLUTIONS) as ExportResolution[];
 
 
 type ExportPhase = 'queued' | 'preparing' | 'rendering' | 'finalizing' | 'verifying' | 'downloading' | 'completed' | 'failed' | 'cancelled';
-type RenderEngine = 'idle' | 'checking' | 'browser' | 'server';
+type RenderBackend = 'automatic' | 'mlt-experimental';
+type RenderEngine = 'idle' | 'checking' | 'browser' | 'server' | 'mlt';
+
+interface MltCapability {
+  selectable: boolean;
+  reason: string;
+  version?: string;
+}
+
+type MltProbeState =
+  | { status: 'loading' }
+  | { status: 'loaded'; capability: MltCapability }
+  | { status: 'error'; reason: string };
 
 
 interface ExportProgress {
@@ -71,7 +84,7 @@ interface ExportProgress {
 
 interface ExportJobSnapshot {
   id: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   progress: number;
   phase?: string;
   processedFrames?: number;
@@ -96,6 +109,42 @@ interface ExportQaUiState {
   report?: ExportQaReport;
   evidenceUrl?: string;
   message?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function diagnosticReason(report: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(report.diagnostics)) return undefined;
+  const messages = report.diagnostics
+    .map((entry) => asRecord(entry)?.message)
+    .filter((message): message is string => typeof message === 'string' && message.trim().length > 0);
+  return messages.length ? messages.join('；') : undefined;
+}
+
+function assessMltCapability(payload: unknown): MltCapability {
+  const report = asRecord(payload);
+  if (!report) return { selectable: false, reason: '探测接口返回了无法识别的数据' };
+
+  const reportedReason = diagnosticReason(report);
+  const version = typeof report.version === 'string' ? report.version.trim() : '';
+  if (typeof report.selectableForExport !== 'boolean') {
+    return { selectable: false, reason: '探测结果缺少统一的导出能力判定', ...(version ? { version } : {}) };
+  }
+  if (!report.selectableForExport) {
+    return {
+      selectable: false,
+      reason: (typeof report.exportCompatibilityFailure === 'string' && report.exportCompatibilityFailure.trim())
+        || reportedReason || (report.availability === 'not-found'
+        ? '没有找到可执行的 melt'
+        : 'melt 或所需 CPU 导出组件未通过服务端检查'),
+      ...(version ? { version } : {}),
+    };
+  }
+  return { selectable: true, reason: '服务端已确认所需 MLT CPU 组件就绪', ...(version ? { version } : {}) };
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -173,8 +222,13 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [clock, setClock] = useState(Date.now());
 
+  const [renderBackend, setRenderBackend] = useState<RenderBackend>('automatic');
   const [renderEngine, setRenderEngine] = useState<RenderEngine>('idle');
+  const [mltProbe, setMltProbe] = useState<MltProbeState>({ status: 'loading' });
   const browserAbortRef = useRef<AbortController | null>(null);
+  const serverJobRef = useRef<string | null>(null);
+  const serverCancelRequestedRef = useRef(false);
+  const [serverJobCancellable, setServerJobCancellable] = useState(false);
   const [autoQaEnabled, setAutoQaEnabled] = useState(() => loadExportAutoQaPreference().enabled);
   const [qa, setQa] = useState<ExportQaUiState | null>(null);
 
@@ -189,11 +243,34 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
     return () => window.clearInterval(timer);
   }, [busy]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/export/backends/mlt/probe', { signal: controller.signal })
+      .then(async (response) => {
+        const payload: unknown = await response.json().catch(() => null);
+        const capability = assessMltCapability(payload);
+        if (!response.ok && capability.selectable) {
+          setMltProbe({ status: 'error', reason: `探测接口返回 HTTP ${response.status}` });
+          return;
+        }
+        setMltProbe({ status: 'loaded', capability });
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setMltProbe({
+          status: 'error',
+          reason: reason instanceof Error ? reason.message : String(reason),
+        });
+      });
+    return () => controller.abort();
+  }, []);
+
   const mgItems = useMemo(() => state.items.filter((it) => it.kind === 'motion-graphic'), [state.items]);
+  const mltSelectable = mltProbe.status === 'loaded' && mltProbe.capability.selectable;
   const base = sanitizeFileName(projectName, 'export');
   const activeTab = TABS.find((entry) => entry.key === tab) ?? TABS[0];
   const outputName = tab === 'video'
-    ? `${base}.${codec === 'vp8' ? 'webm' : 'mp4'}`
+    ? `${base}.${renderBackend === 'mlt-experimental' ? 'mp4' : codec === 'vp8' ? 'webm' : 'mp4'}`
     : tab === 'audio' ? `${base}.mp3`
       : tab === 'subtitles' ? `${base}.${subtitleFormat}`
         : tab === 'xml' ? `${base}-${nleFormat === 'fcp_xml_resolve' ? 'resolve' : 'premiere'}.fcpxml`
@@ -213,7 +290,19 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
     if (!enabled) setQa(null);
   };
 
-  const verifyCompletedExport = async (completed: NonNullable<ExportJobSnapshot['result']>) => {
+  const changeRenderBackend = (next: RenderBackend) => {
+    if (next === 'mlt-experimental' && !mltSelectable) return;
+    setRenderBackend(next);
+    setRenderEngine(next === 'mlt-experimental' ? 'mlt' : 'idle');
+    setError(null);
+    setProgress(null);
+    setQa(null);
+  };
+
+  const verifyCompletedExport = async (
+    completed: NonNullable<ExportJobSnapshot['result']>,
+    expectedFps = fps,
+  ) => {
     if (!completed.path) return;
     setBusy(t('正在检查导出质量…'));
     setQa({ status: 'running', attempts: 0 });
@@ -229,7 +318,7 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
       durationSeconds: completed.durationSeconds ?? baseline.durationSeconds,
       width: completed.width ?? baseline.width,
       height: completed.height ?? baseline.height,
-      fps: completed.fps ?? fps,
+      fps: completed.fps ?? expectedFps,
     };
     const sourceStart = completed.sourceStartSeconds ?? 0;
     const cutTimesSeconds = timelineCutTimesSeconds(state, 24)
@@ -261,15 +350,24 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
     }
   };
 
-  /** Server compatibility path: async render jobs report real Remotion progress before download. */
+  /** Server render path: async Remotion or experimental MLT jobs report progress before download. */
 
-  const exportMedia = async (format: 'video' | 'audio') => {
-    if (format === 'video') setRenderEngine('server');
-    const useCodec = format === 'audio' ? 'mp3' : codec;
-    const body: Record<string, unknown> = { state, format, codec: useCodec, name: base };
+  const exportMedia = async (format: 'video' | 'audio', backend: RenderBackend = 'automatic') => {
+    const useMlt = format === 'video' && backend === 'mlt-experimental';
+    if (format === 'video') setRenderEngine(useMlt ? 'mlt' : 'server');
+    if (useMlt) setServerJobCancellable(true);
+    const useCodec = format === 'audio' ? 'mp3' : useMlt ? 'h264' : codec;
+    const body: Record<string, unknown> = { format, codec: useCodec, name: base };
+    if (!useMlt) body.state = state;
     if (format === 'video') {
-      body.resolution = resolution;
-      if (fps !== state.fps) body.fps = fps;
+      if (useMlt) {
+        body.backend = 'mlt-experimental';
+        body.neutralTimeline = toNeutralTimeline(state);
+      }
+      else {
+        body.resolution = resolution;
+        if (fps !== state.fps) body.fps = fps;
+      }
     }
     const submission = await fetch('/export/job', {
       method: 'POST',
@@ -280,43 +378,62 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
     if (!submission.ok || !submitted?.renderId) {
       throw new Error(submitted?.error ?? t('导出失败 ({status})', { status: submission.status }));
     }
+    serverJobRef.current = submitted.renderId;
+    if (useMlt && serverCancelRequestedRef.current) {
+      const cancellation = await fetch(`/export/job/${encodeURIComponent(submitted.renderId)}`, { method: 'DELETE' });
+      if (cancellation.ok) throw new DOMException(t('服务端导出已取消'), 'AbortError');
+      const payload = await cancellation.json().catch(() => null) as { error?: string } | null;
+      serverCancelRequestedRef.current = false;
+      throw new Error(payload?.error ?? t('无法取消服务端导出 ({status})', { status: cancellation.status }));
+    }
 
     let completed: ExportJobSnapshot['result'];
-    while (!completed) {
-      const response = await fetch(`/export/job/${encodeURIComponent(submitted.renderId)}`);
-      const snapshot = (await response.json().catch(() => null)) as ExportJobSnapshot | { error?: string } | null;
-      if (!response.ok || !snapshot || !('status' in snapshot)) {
-        const message = snapshot && 'error' in snapshot ? snapshot.error : undefined;
-        throw new Error(message ?? t('无法读取导出进度 ({status})', { status: response.status }));
-      }
-      if (snapshot.status === 'failed') throw new Error(snapshot.error ?? t('导出失败'));
-      if (snapshot.status === 'succeeded') {
-        if (!snapshot.result?.path) throw new Error(t('导出完成，但没有可下载的文件'));
+    try {
+      while (!completed) {
+        const response = await fetch(`/export/job/${encodeURIComponent(submitted.renderId)}`);
+        const snapshot = (await response.json().catch(() => null)) as ExportJobSnapshot | { error?: string } | null;
+        if (!response.ok || !snapshot || !('status' in snapshot)) {
+          if (useMlt && serverCancelRequestedRef.current && (response.status === 404 || response.status === 204)) {
+            throw new DOMException(t('鏈嶅姟绔鍑哄凡鍙栨秷'), 'AbortError');
+          }
+          const message = snapshot && 'error' in snapshot ? snapshot.error : undefined;
+          throw new Error(message ?? t('无法读取导出进度 ({status})', { status: response.status }));
+        }
+        if (snapshot.status === 'failed') throw new Error(snapshot.error ?? t('导出失败'));
+        if (snapshot.status === 'cancelled') throw new DOMException(t('服务端导出已取消'), 'AbortError');
+        if (snapshot.status === 'succeeded') {
+          if (!snapshot.result?.path) throw new Error(t('导出完成，但没有可下载的文件'));
+          setProgress((current) => current ? {
+            ...current,
+            phase: 'finalizing',
+            percent: 99,
+            processedFrames: snapshot.processedFrames,
+            totalFrames: snapshot.totalFrames,
+          } : current);
+          completed = snapshot.result;
+          break;
+        }
+        const phase: ExportPhase = snapshot.phase === 'queued'
+          ? 'queued'
+          : snapshot.phase === 'finalizing' ? 'finalizing'
+            : snapshot.phase === 'rendering' ? 'rendering' : 'preparing';
         setProgress((current) => current ? {
           ...current,
-          phase: 'finalizing',
-          percent: 99,
+          phase,
+          percent: Math.min(99, Math.max(current.percent, Math.round(snapshot.progress))),
           processedFrames: snapshot.processedFrames,
           totalFrames: snapshot.totalFrames,
         } : current);
-        completed = snapshot.result;
-        break;
+        await wait(300);
       }
-      const phase: ExportPhase = snapshot.phase === 'queued'
-        ? 'queued'
-        : snapshot.phase === 'finalizing' ? 'finalizing'
-          : snapshot.phase === 'rendering' ? 'rendering' : 'preparing';
-      setProgress((current) => current ? {
-        ...current,
-        phase,
-        percent: Math.min(99, Math.max(current.percent, Math.round(snapshot.progress))),
-        processedFrames: snapshot.processedFrames,
-        totalFrames: snapshot.totalFrames,
-      } : current);
-      await wait(300);
+    } finally {
+      serverJobRef.current = null;
+      if (useMlt) setServerJobCancellable(false);
     }
 
-    if (format === 'video' && autoQaEnabled) await verifyCompletedExport(completed);
+    if (format === 'video' && autoQaEnabled) {
+      await verifyCompletedExport(completed, useMlt ? state.fps : fps);
+    }
 
     setBusy(t('正在下载…'));
     setProgress((current) => current ? { ...current, phase: 'downloading', percent: 99 } : current);
@@ -335,6 +452,13 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
 
   /** 视频优先在浏览器中通过 WebCodecs 渲染，不支持的时间线无缝回退服务端。 */
   const exportVideo = async () => {
+    if (renderBackend === 'mlt-experimental') {
+      if (!mltSelectable) throw new Error(t('实验性 MLT 渲染内核当前不可用'));
+      setRenderEngine('mlt');
+      await exportMedia('video', 'mlt-experimental');
+      return;
+    }
+
     // Auto QA verifies the server-side artifact before it is downloaded, so it
     // must use the compatibility path instead of the in-memory browser blob.
     if (autoQaEnabled) {
@@ -489,6 +613,7 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
     if (progress?.phase === 'completed') { onClose(); return; }
     setError(null);
     setQa(null);
+    serverCancelRequestedRef.current = false;
     const startedAt = Date.now();
     setClock(startedAt);
     setProgress({ phase: 'preparing', percent: 0, startedAt });
@@ -508,7 +633,7 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
           ...current,
           phase: 'cancelled',
           finishedAt: Date.now(),
-          detail: t('已取消浏览器渲染'),
+          detail: t('已取消导出'),
         } : current);
         return;
       }
@@ -516,13 +641,35 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
       setError(message);
       setProgress((current) => current ? { ...current, phase: 'failed', finishedAt: Date.now() } : current);
     } finally {
+      serverCancelRequestedRef.current = false;
+      setServerJobCancellable(false);
       setBusy(null);
     }
   };
 
+  const cancelExport = () => {
+    browserAbortRef.current?.abort();
+    if (renderEngine !== 'mlt') return;
+    serverCancelRequestedRef.current = true;
+    setBusy(t('正在取消实验性 MLT 导出…'));
+    setProgress((current) => current ? { ...current, detail: t('正在停止素材预检或 melt 进程树') } : current);
+    const jobId = serverJobRef.current;
+    if (!jobId) return;
+    void fetch(`/export/job/${encodeURIComponent(jobId)}`, { method: 'DELETE' }).then(async (response) => {
+      if (response.ok) return;
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      serverCancelRequestedRef.current = false;
+      setError(payload?.error ?? t('无法取消服务端导出 ({status})', { status: response.status }));
+    }).catch((reason: unknown) => {
+      serverCancelRequestedRef.current = false;
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  };
+
   const disabled = !!busy
     || (tab === 'subtitles' && !subtitleCaptions)
-    || (tab === 'mg' && mgItems.length === 0);
+    || (tab === 'mg' && mgItems.length === 0)
+    || (tab === 'video' && renderBackend === 'mlt-experimental' && !mltSelectable);
 
   const phaseLabel = progress ? ({
     queued: t('等待渲染'),
@@ -592,7 +739,8 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
                 <p>{activeTab.summary}</p>
               </div>
               <span className="cc-export-local-badge"><i />{tab !== 'video' ? t('本机渲染')
-                : renderEngine === 'server' ? t('兼容渲染')
+                : renderBackend === 'mlt-experimental' || renderEngine === 'mlt' ? t('实验性 MLT · CPU')
+                  : renderEngine === 'server' ? t('兼容渲染')
                   : renderEngine === 'browser' ? t('浏览器加速')
                     : renderEngine === 'checking' ? t('检测浏览器') : t('浏览器优先')}</span>
             </div>
@@ -605,18 +753,46 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
             >
               {tab === 'video' && (
                 <>
-                  <Row label={t('编码')}>
-                    <select className="cc-export-select" value={codec} onChange={(event) => setCodec(event.target.value as 'h264' | 'vp8')}>
-                      <option value="h264">MP4 (H.264)</option>
-                      <option value="vp8">WebM (VP8)</option>
+                  <Row label={t('渲染内核')}>
+                    <select
+                      className="cc-export-select"
+                      value={renderBackend}
+                      onChange={(event) => changeRenderBackend(event.target.value as RenderBackend)}
+                      disabled={!!busy}
+                    >
+                      <option value="automatic">{t('自动（浏览器优先 / Remotion 兼容）')}</option>
+                      <option value="mlt-experimental" disabled={!mltSelectable}>
+                        {t('MLT / melt（实验性 CPU）')}
+                      </option>
                     </select>
                   </Row>
-                  <Row label={t('分辨率')}>
-                    <Segmented options={RESOLUTIONS.map((value) => ({ value, label: value }))} value={resolution} onChange={setResolution} />
-                  </Row>
-                  <Row label={t('帧率')}>
-                    <Segmented options={FPS_OPTIONS.map((value) => ({ value, label: `${value} fps` }))} value={fps} onChange={setFps} />
-                  </Row>
+                  <MltBackendStatus probe={mltProbe} />
+                  {renderBackend === 'mlt-experimental' ? (
+                    <InfoCard
+                      icon="film"
+                      title={t('固定输出：MP4 · H.264 · 原尺寸 · 原帧率')}
+                      text={t('{width}×{height} · {fps} fps。实验性 MLT 当前只支持基础 video / image / audio 轨道；字幕、MG 动画、转场、关键帧、变速及其他效果会由服务端兼容检查阻断，不会静默丢失。', {
+                        width: state.width,
+                        height: state.height,
+                        fps: state.fps,
+                      })}
+                    />
+                  ) : (
+                    <>
+                      <Row label={t('编码')}>
+                        <select className="cc-export-select" value={codec} onChange={(event) => setCodec(event.target.value as 'h264' | 'vp8')}>
+                          <option value="h264">MP4 (H.264)</option>
+                          <option value="vp8">WebM (VP8)</option>
+                        </select>
+                      </Row>
+                      <Row label={t('分辨率')}>
+                        <Segmented options={RESOLUTIONS.map((value) => ({ value, label: value }))} value={resolution} onChange={setResolution} />
+                      </Row>
+                      <Row label={t('帧率')}>
+                        <Segmented options={FPS_OPTIONS.map((value) => ({ value, label: `${value} fps` }))} value={fps} onChange={setFps} />
+                      </Row>
+                    </>
+                  )}
                   <label className="cc-export-toggle cc-export-qa-toggle">
                     <span>
                       <strong>{t('导出后自动质量检查')}</strong>
@@ -725,11 +901,12 @@ export function ExportDialog({ state, projectName, onClose }: ExportDialogProps)
                 <span>{progress?.phase === 'completed' ? t('已生成') : t('即将生成')}</span>
                 <strong title={outputName}>{outputName}</strong>
               </div>
-              {busy && (renderEngine === 'checking' || renderEngine === 'browser') && (
+              {busy && (renderEngine === 'checking' || renderEngine === 'browser' || serverJobCancellable) && (
                 <button
                   type="button"
                   className="cc-export-cancel"
-                  onClick={() => browserAbortRef.current?.abort()}
+                  onClick={cancelExport}
+                  disabled={serverCancelRequestedRef.current && renderEngine === 'mlt'}
                 >
                   {t('取消')}
                 </button>
@@ -769,6 +946,45 @@ function InfoCard({ icon, title, text }: { icon: IconName; title: string; text: 
         <strong>{title}</strong>
         <p>{text}</p>
       </div>
+    </div>
+  );
+}
+
+function MltBackendStatus({ probe }: { probe: MltProbeState }) {
+  const t = useT();
+  if (probe.status === 'loading') {
+    return (
+      <div className="cc-export-backend-status checking" role="status">
+        <strong>{t('正在检查实验性 MLT…')}</strong>
+        <p>{t('正在读取本机 melt 版本以及 producer、consumer、transition 和 H.264 编码能力。')}</p>
+      </div>
+    );
+  }
+
+  const capability: MltCapability = probe.status === 'loaded'
+    ? probe.capability
+    : { selectable: false, reason: probe.reason };
+  if (capability.selectable) {
+    return (
+      <div className="cc-export-backend-status available" role="status">
+        <strong>{t('实验性 MLT 可以选择')}</strong>
+        <p>
+          {capability.version ? `${capability.version} · ` : ''}
+          {t('必需组件已报告可用。当前仅为 CPU 基础轨道导出，不代表 GPU 加速或生产级可用。')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cc-export-backend-status unavailable" role="status">
+      <strong>{t('实验性 MLT 当前不可选择')}</strong>
+      <p>{t('探测原因：')}{capability.reason}</p>
+      <p>
+        {t('若尚未安装或自动探测不到，请把启动 CutAI 进程的环境变量 ')}
+        <code>MLT_MELT_PATH</code>
+        {t(' 设为 melt.exe 的绝对路径，然后完全重启应用；若组件缺失，请改用包含完整组件的 MLT 构建。')}
+      </p>
     </div>
   );
 }

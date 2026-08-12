@@ -36,6 +36,9 @@ export interface NeutralMediaSourceV1 {
   uri: string;
   /** Optional isolated/processed audio used while the picture still uses uri. */
   alternateAudioUri?: string;
+  /** Ingested display dimensions. Visual backends use these to fail closed when fit semantics cannot be preserved. */
+  width?: number;
+  height?: number;
   sourceInFrame: number;
   playbackRate: number;
   /** Edited transcript audio is represented as explicit, ordered source cuts. */
@@ -204,11 +207,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 0;
+  return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) > 0;
+  return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -332,6 +335,11 @@ export function neutralTimelineV1Errors(value: unknown): string[] {
         if (isObject(rawClip.source) && rawClip.source.alternateAudioUri !== undefined
           && (typeof rawClip.source.alternateAudioUri !== 'string' || !rawClip.source.alternateAudioUri.trim())) {
           errors.push(`clip ${clipId || clipIndex} alternateAudioUri must be a non-empty string`);
+        }
+        if (isObject(rawClip.source)
+          && (rawClip.source.width !== undefined || rawClip.source.height !== undefined)
+          && (!isPositiveInteger(rawClip.source.width) || !isPositiveInteger(rawClip.source.height))) {
+          errors.push(`clip ${clipId || clipIndex} source width/height must both be positive integers`);
         }
         if (isObject(rawClip.source) && rawClip.source.segments !== undefined) {
           if (!Array.isArray(rawClip.source.segments)) {

@@ -36,6 +36,11 @@ const state: TimelineState = {
       },
     },
   },
+  assets: [{
+    id: 'picture-asset', name: '采访画面', kind: 'video',
+    src: '/workspace-media/p/%E9%87%87%E8%AE%BF.mp4', durationInFrames: 300,
+    width: 1920, height: 1080,
+  }],
   items: [
     {
       id: 'mg', track: 'mg-track', startFrame: 0, durationInFrames: 60,
@@ -81,6 +86,11 @@ const picture = neutral.tracks[1]!.clips[0]!;
 assert.equal(picture.source?.uri, '/workspace-media/p/%E9%87%87%E8%AE%BF.mp4', 'logical URI must stay unresolved');
 assert.equal(picture.source?.alternateAudioUri, '/media/uploads/isolated.wav');
 assert.equal(picture.source?.sourceInFrame, 15);
+assert.deepEqual(
+  [picture.source?.width, picture.source?.height],
+  [1920, 1080],
+  'trusted imported dimensions must cross the neutral boundary for fail-closed fit checks',
+);
 assert.equal(picture.visual?.contrast, 1.1);
 assert.deepEqual(picture.keyframes?.x?.map((keyframe) => keyframe.frame), [0, 30]);
 
@@ -92,6 +102,21 @@ assert.deepEqual(speech.source?.segments, [
   { timelineOffsetFrames: 30, sourceInFrame: 60, durationFrames: 30 },
 ]);
 assert.equal(speech.audio?.volume, 0.8);
+
+const ranged = toNeutralTimeline(state, { frameRange: [15, 60] });
+assert.equal(ranged.durationFrames, 45);
+const rangedPicture = ranged.tracks.find((track) => track.id === 'video-main')?.clips[0];
+assert.deepEqual([rangedPicture?.startFrame, rangedPicture?.durationFrames, rangedPicture?.source?.sourceInFrame], [0, 45, 34]);
+assert.deepEqual(rangedPicture?.keyframes?.x, [{ frame: 15, value: 20 }]);
+assert.deepEqual(ranged.tracks.find((track) => track.id === 'audio-main')?.clips[0]?.source?.segments, [
+  { timelineOffsetFrames: 0, sourceInFrame: 15, durationFrames: 15 },
+  { timelineOffsetFrames: 15, sourceInFrame: 60, durationFrames: 30 },
+]);
+assert.deepEqual(
+  ranged.tracks.find((track) => track.id === 'caption-main')?.captions?.cues.map((cue) => [cue.startFrame, cue.endFrameExclusive]),
+  [[0, 45]],
+);
+assert.throws(() => toNeutralTimeline(state, { frameRange: [60, 15] }), /valid half-open interval/);
 
 const captionTrack = neutral.tracks[3]!;
 assert.equal(captionTrack.captions?.cues.length, 1);

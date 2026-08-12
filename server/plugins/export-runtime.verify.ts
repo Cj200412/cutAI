@@ -23,19 +23,31 @@ try {
   const staleName = exportJobFilename('00000000-0000-4000-8000-000000000001', 'mp4');
   const freshName = exportJobFilename('00000000-0000-4000-8000-000000000002', 'webm');
   const unrelatedName = 'user-owned-video.mp4';
+  const staleMltPartial = `.${exportJobFilename('00000000-0000-4000-8000-000000000003', 'mp4')}.partial-00000000-0000-4000-8000-000000000004.mp4`;
+  const lookalikePartial = '.user-owned-video.mp4.partial-00000000-0000-4000-8000-000000000005.mp4';
+  const lookalikeFinal = 'openchatcut-export-job-my-vacation.mp4';
   await Promise.all([
     writeFile(join(exportDir, staleName), 'stale export'),
     writeFile(join(exportDir, freshName), 'fresh export'),
     writeFile(join(exportDir, unrelatedName), 'user media'),
+    writeFile(join(exportDir, staleMltPartial), 'stale crashed MLT output'),
+    writeFile(join(exportDir, lookalikePartial), 'user lookalike'),
+    writeFile(join(exportDir, lookalikeFinal), 'user prefix lookalike'),
   ]);
   const staleDate = new Date(now - 2 * 60 * 60_000);
   await utimes(join(exportDir, staleName), staleDate, staleDate);
+  await utimes(join(exportDir, staleMltPartial), staleDate, staleDate);
+  await utimes(join(exportDir, lookalikePartial), staleDate, staleDate);
+  await utimes(join(exportDir, lookalikeFinal), staleDate, staleDate);
 
   const removed = await cleanupStaleExportFiles(exportDir, { now, retentionMs: 60 * 60_000 });
-  assert.equal(removed, 1);
+  assert.equal(removed, 2);
   assert.equal(existsSync(join(exportDir, staleName)), false, 'stale temporary export should be removed');
   assert.equal(existsSync(join(exportDir, freshName)), true, 'fresh temporary export should be retained');
   assert.equal(existsSync(join(exportDir, unrelatedName)), true, 'user media must never be swept');
+  assert.equal(existsSync(join(exportDir, staleMltPartial)), false, 'stale crashed MLT partial should be removed');
+  assert.equal(existsSync(join(exportDir, lookalikePartial)), true, 'unrelated partial-like user media must be retained');
+  assert.equal(existsSync(join(exportDir, lookalikeFinal)), true, 'user media sharing the export prefix must be retained');
 } finally {
   await rm(exportDir, { recursive: true, force: true });
 }

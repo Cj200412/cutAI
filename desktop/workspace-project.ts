@@ -58,6 +58,12 @@ export interface OpenWorkspaceResult<T> {
 }
 
 const roots = new Map<string, string>();
+interface WorkspaceMediaIndexCache {
+  root: string;
+  paths: Set<string>;
+}
+
+const mediaIndexes = new Map<string, WorkspaceMediaIndexCache>();
 export type WorkspaceCliMcpMode = 'read-only' | 'manual-edit';
 
 interface WorkspaceCliGrant {
@@ -161,12 +167,72 @@ async function scanDirectory(root: string, projectId: string): Promise<Workspace
 }
 
 export function registerWorkspaceRoot(projectId: string, rootPath: string): void {
-  roots.set(projectId, validateRoot(rootPath));
+  const root = validateRoot(rootPath);
+  // Opening/rescanning is the only supported way to refresh registered media.
+  // Invalidate here so Range requests can reuse one parsed index until then.
+  mediaIndexes.delete(projectId);
+  roots.set(projectId, root);
 }
 
 export function workspaceProjectMatchesRoot(projectId: string, rootPath: string): boolean {
   const registered = roots.get(projectId);
   return !!registered && relative(registered, validateRoot(rootPath)) === '';
+}
+
+function parseWorkspaceMediaUri(raw: string): { projectId: string; relativePath: string } | null {
+  const match = /^\/workspace-media\/([^/]+)\/(.+?)(?:[?#].*)?$/.exec(raw);
+  if (!match) return null;
+  try {
+    const projectId = decodeURIComponent(match[1]);
+    const relativePath = match[2].split('/').map(decodeURIComponent).join(sep);
+    return projectId && relativePath ? { projectId, relativePath } : null;
+  } catch {
+    return null;
+  }
+}
+
+function mediaIndexKey(relativePath: string): string {
+  const normalized = relativePath.split(/[\\/]/).join('/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+async function registeredMediaPaths(projectId: string, rootReal: string): Promise<Set<string> | null> {
+  const cached = mediaIndexes.get(projectId);
+  if (cached && cached.root === rootReal) return cached.paths;
+
+  const indexRaw = await readJson(join(metadataRoot(rootReal), MEDIA_INDEX_FILE));
+  if (!Array.isArray(indexRaw)) return null;
+  const paths = new Set<string>();
+  for (const entry of indexRaw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Partial<WorkspaceMediaRecord>;
+    if (typeof row.relativePath !== 'string' || row.url !== mediaUrl(projectId, row.relativePath)) continue;
+    paths.add(mediaIndexKey(row.relativePath));
+  }
+  mediaIndexes.set(projectId, { root: rootReal, paths });
+  return paths;
+}
+
+/** Resolve a same-origin workspace URI to a contained, registered local file. */
+export async function resolveWorkspaceMediaFile(raw: string): Promise<string | null> {
+  const parsed = parseWorkspaceMediaUri(raw);
+  if (!parsed) return null;
+  const root = roots.get(parsed.projectId);
+  if (!root) return null;
+  try {
+    const rootReal = await realpath(root);
+    const targetReal = await realpath(resolve(rootReal, parsed.relativePath));
+    if (!isWithin(rootReal, targetReal) || !(await stat(targetReal)).isFile()) return null;
+    const relativePath = relative(rootReal, targetReal);
+    const segments = relativePath.split(/[\\/]/);
+    if (segments.some((segment) => !segment || segment.startsWith('.') || IGNORED_DIRS.has(segment))) return null;
+    if (!MEDIA_EXTENSIONS.has(extname(targetReal).toLowerCase())) return null;
+    const indexedPaths = await registeredMediaPaths(parsed.projectId, rootReal);
+    if (!indexedPaths?.has(mediaIndexKey(relativePath))) return null;
+    return targetReal;
+  } catch {
+    return null;
+  }
 }
 
 export function issueWorkspaceCliToken(
@@ -339,28 +405,16 @@ function contentType(path: string): string {
 /** Same-origin, read-only media endpoint with root containment and byte-range support. */
 export async function serveWorkspaceMedia(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const raw = req.url ?? '';
-  const match = /^\/workspace-media\/([^/]+)\/(.+?)(?:\?.*)?$/.exec(raw);
-  if (!match) return false;
+  if (!/^\/workspace-media\//.test(raw)) return false;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.statusCode = 405;
     res.end();
     return true;
   }
-  const projectId = decodeURIComponent(match[1]);
-  const root = roots.get(projectId);
-  if (!root) {
-    res.statusCode = 404;
-    res.end('Workspace is not open');
-    return true;
-  }
   try {
-    const relativePath = match[2].split('/').map(decodeURIComponent).join(sep);
-    const target = resolve(root, relativePath);
-    const rootReal = await realpath(root);
-    const targetReal = await realpath(target);
-    if (!isWithin(rootReal, targetReal)) throw new Error('Path outside workspace');
+    const targetReal = await resolveWorkspaceMediaFile(raw);
+    if (!targetReal) throw new Error('Workspace media not found');
     const info = await stat(targetReal);
-    if (!info.isFile()) throw new Error('Not a file');
     const range = req.headers.range;
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Type', contentType(targetReal));

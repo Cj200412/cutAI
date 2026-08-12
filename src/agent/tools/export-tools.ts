@@ -85,11 +85,13 @@ export const EXPORT_TOOL_NAMES = new Set(EXPORT_TOOL_SCHEMAS.map((t) => t.name))
 // 的 status:'completed' 对齐——那是导出家族的终态 wire）。终态"判定"本身走共享 job-model
 // 的 isComplete/isFailed/isTerminal(见下),此函数只负责家族 wire 的呈现。
 function mapStatus(status: string): string {
-  return status === 'succeeded' ? 'completed' : status;
+  if (status === 'succeeded') return 'completed';
+  if (status === 'cancelled' || status === 'canceled') return 'failed';
+  return status;
 }
 
 /** 后端 /export/job/:id 快照里工具关心的字段（其余忽略）。 */
-interface JobSnapshot extends JobReportBase<'queued' | 'running' | 'succeeded' | 'failed'> {
+interface JobSnapshot extends JobReportBase<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'> {
   id: string;
   progress: number;
   result?: {
@@ -185,7 +187,7 @@ async function pollOnce(renderId: string): Promise<PollResult> {
       fps: result.fps,
       sourceStartSeconds: result.sourceStartSeconds,
     } : {}),
-    ...(isFailed(snapshot.status) && snapshot.error ? { error: snapshot.error } : {}),
+    ...(isFailed(snapshot.status) ? { error: snapshot.error ?? 'render job was cancelled' } : {}),
   };
 }
 

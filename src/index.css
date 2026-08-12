@@ -521,6 +521,13 @@ button, input, select { font: inherit; }
 .cc-export-info > span { width:24px; height:24px; flex:0 0 24px; display:grid; place-items:center; color:var(--cc-accent); }
 .cc-export-info strong { display:block; color:var(--cc-text-strong); font-size:12px; }
 .cc-export-info p { max-width:58ch; margin:3px 0 0; color:var(--cc-text-dim); font-size:10.5px; line-height:1.45; }
+.cc-export-backend-status { display:flex; flex-direction:column; gap:4px; padding:9px 10px; border:0.5px solid var(--cc-border-light); border-radius:4px; background:var(--cc-bg); font-size:10.5px; line-height:1.45; }
+.cc-export-backend-status strong { color:var(--cc-text-strong); font-size:11px; }
+.cc-export-backend-status p { margin:0; color:var(--cc-text-dim); overflow-wrap:anywhere; }
+.cc-export-backend-status code { padding:1px 3px; border-radius:2px; background:var(--cc-panel-alt); color:var(--cc-text); font:10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cc-export-backend-status.available { border-color:var(--cc-success); }
+.cc-export-backend-status.unavailable { border-color:var(--cc-gold); }
+.cc-export-backend-status.checking { border-color:var(--cc-accent); }
 .cc-export-toggle { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:0.5px solid var(--cc-border); border-bottom:0.5px solid var(--cc-border); cursor:pointer; }
 .cc-export-toggle > span { min-width:0; flex:1; }
 .cc-export-toggle strong,.cc-export-toggle small { display:block; }
@@ -531,7 +538,7 @@ button, input, select { font: inherit; }
 .cc-export-qa-card { display:flex; flex-direction:column; gap:7px; padding:9px 10px; border:0.5px solid var(--cc-border-light); border-radius:4px; background:var(--cc-bg); color:var(--cc-text-muted); font-size:10.5px; line-height:1.4; }
 .cc-export-qa-card.running { border-color:var(--cc-accent); }
 .cc-export-qa-card.passed { border-color:var(--cc-success); }
-.cc-export-qa-card.issues,.cc-export-qa-card.error { border-color:#d99945; }
+.cc-export-qa-card.issues,.cc-export-qa-card.error { border-color:var(--cc-gold); }
 .cc-export-qa-card strong { color:var(--cc-text-strong); font-size:11px; }
 .cc-export-qa-card p { margin:0; color:var(--cc-text-dim); }
 .cc-export-qa-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; }

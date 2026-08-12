@@ -1,6 +1,10 @@
 // Runnable check: `npx tsx server/mlt/probe.verify.ts`.
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  mltExperimentalCpuExportCompatibilityFailure,
   mltProbeEnvironment,
   parseMltList,
   probeMlt,
@@ -19,6 +23,45 @@ const processResult = (stdout = '', overrides: Partial<BoundedProcessResult> = {
   truncated: false,
   ...overrides,
 });
+
+function processIsRunning(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processIsRunning(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !processIsRunning(pid);
+}
+
+function collectTreeProcessIds(raw: string | undefined, target: number[]): void {
+  const record = raw?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (!record) return;
+  try {
+    const value = JSON.parse(record) as { parentPid?: unknown; childPid?: unknown };
+    for (const candidate of [value.parentPid, value.childPid]) {
+      const pid = Number(candidate);
+      if (Number.isSafeInteger(pid) && pid > 0 && !target.includes(pid)) target.push(pid);
+    }
+  } catch {
+    // The assertions below report a missing record; cleanup remains best effort.
+  }
+}
+
+async function forceCleanupProcess(pid: number): Promise<void> {
+  if (!processIsRunning(pid)) return;
+  try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
+  await waitForProcessExit(pid, 2_000);
+}
 
 assert.deepEqual(parseMltList(`
 ---
@@ -48,6 +91,8 @@ const runner: MltProbeRunner = async (executable, args) => {
     producers: ['avformat', 'color'],
     filters: ['qtext'],
     video_codecs: ['libx264', 'h264_nvenc', 'hevc_qsv', 'libx264_nvenc_fake'],
+    audio_codecs: ['aac'],
+    formats: ['mp4'],
   };
   return processResult(`${query}:\n${(values[query ?? ''] ?? []).map((item) => `  - ${item}`).join('\n')}\n`);
 };
@@ -71,6 +116,7 @@ assert.deepEqual(report.checks, {
 assert.equal(report.renderVerified, false);
 assert.equal(report.operationallyRendered, false);
 assert.equal(report.selectableForExport, false);
+assert.match(mltExperimentalCpuExportCompatibilityFailure(report) ?? '', /avformat, xml, and color producers/);
 assert.ok(maxActive <= 2, 'query concurrency must remain bounded');
 assert.deepEqual(calls.map((call) => call.args), [
   ['-version'],
@@ -79,8 +125,46 @@ assert.deepEqual(calls.map((call) => call.args), [
   ['-query', 'filters'],
   ['-query', 'transitions'],
   ['-query', 'video_codecs'],
+  ['-query', 'audio_codecs'],
+  ['-query', 'formats'],
 ]);
 assert.ok(calls.every((call) => call.executable === 'C:\\trusted\\melt.exe'));
+
+const eligibleReport = await probeMlt({
+  resolveExecutable: async () => ({ status: 'resolved', source: 'path', resolvedPath: '/opt/bin/melt' }),
+  runner: async (_executable, args) => {
+    if (args[0] === '-version') return processResult('melt 7.40.0');
+    const values: Record<string, string[]> = {
+      consumers: ['avformat'],
+      producers: ['avformat', 'color', 'xml'],
+      filters: [],
+      transitions: ['mix', 'qtblend'],
+      video_codecs: ['libx264'],
+      audio_codecs: ['aac'],
+      formats: ['mp4'],
+    };
+    const query = args[1] ?? '';
+    return processResult(`${query}:\n${(values[query] ?? []).map((item) => `  - ${item}`).join('\n')}\n`);
+  },
+});
+assert.equal(eligibleReport.selectableForExport, true);
+assert.equal(mltExperimentalCpuExportCompatibilityFailure(eligibleReport), undefined);
+assert.equal(eligibleReport.renderVerified, false);
+assert.equal(eligibleReport.operationallyRendered, false);
+
+for (const [query, missingItem, expected] of [
+  ['producers', 'xml', /avformat, xml, and color producers/],
+  ['consumers', 'avformat', /avformat consumer/],
+  ['transitions', 'qtblend', /qtblend and mix transitions/],
+  ['video_codecs', 'libx264', /CPU libx264 encoder/],
+  ['audio_codecs', 'aac', /AAC audio encoder/],
+  ['formats', 'mp4', /MP4 muxer/],
+] as const) {
+  const ineligibleReport = structuredClone(eligibleReport);
+  ineligibleReport.queries[query].items = ineligibleReport.queries[query].items.filter((item) => item !== missingItem);
+  const failure = mltExperimentalCpuExportCompatibilityFailure(ineligibleReport);
+  assert.match(failure ?? '', expected);
+}
 
 let versionOnlyCalls = 0;
 const badVersion = await probeMlt({
@@ -138,10 +222,58 @@ assert.equal(excessive.terminationReason, 'output-limit');
 assert.equal(excessive.truncated, true);
 assert.ok(Buffer.byteLength(excessive.stdout) <= 128);
 
-const timedOut = await runBoundedProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-  timeoutMs: 50, maxOutputBytes: 128, killGraceMs: 1_000,
+const treeDirectory = await mkdtemp(join(tmpdir(), 'cutai-mlt-probe-tree-'));
+const treePidFile = join(treeDirectory, 'processes.json');
+const treeProcessIds: number[] = [];
+let timedOutTree: BoundedProcessResult | undefined;
+try {
+  const treeFixture = String.raw`
+const { spawn } = require('node:child_process');
+const { writeFileSync } = require('node:fs');
+const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 15000); setInterval(() => {}, 1000)'], {
+  windowsHide: true,
+  stdio: 'ignore',
 });
-assert.equal(timedOut.terminationReason, 'timeout');
+if (!descendant.pid) process.exit(2);
+const record = JSON.stringify({ parentPid: process.pid, childPid: descendant.pid });
+writeFileSync(process.argv[1], record, 'utf8');
+process.stdout.write(record + '\n');
+setTimeout(() => process.exit(0), 15000);
+setInterval(() => {}, 1000);
+`;
+  timedOutTree = await runBoundedProcess(process.execPath, ['-e', treeFixture, treePidFile], {
+    timeoutMs: 500,
+    maxOutputBytes: 1_024,
+    killGraceMs: 5_000,
+  });
+  assert.equal(timedOutTree.terminationReason, 'timeout');
+  collectTreeProcessIds(await readFile(treePidFile, 'utf8'), treeProcessIds);
+  assert.equal(treeProcessIds.length, 2, 'timeout fixture must report its parent and descendant process ids');
+  for (const pid of treeProcessIds) {
+    assert.equal(
+      await waitForProcessExit(pid),
+      true,
+      `probe timeout must terminate process-tree member ${pid} on ${process.platform}`,
+    );
+  }
+} finally {
+  if (!treeProcessIds.length) {
+    try { collectTreeProcessIds(await readFile(treePidFile, 'utf8'), treeProcessIds); } catch { /* fixture did not start */ }
+    collectTreeProcessIds(timedOutTree?.stdout, treeProcessIds);
+  }
+  for (const pid of [...treeProcessIds].reverse()) await forceCleanupProcess(pid);
+  await rm(treeDirectory, { recursive: true, force: true });
+}
+
+const abortController = new AbortController();
+const abortedProcess = runBoundedProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  timeoutMs: 5_000,
+  maxOutputBytes: 128,
+  killGraceMs: 1_000,
+  signal: abortController.signal,
+});
+setTimeout(() => abortController.abort(), 25);
+assert.equal((await abortedProcess).terminationReason, 'aborted');
 
 const failed = await runBoundedProcess(process.execPath, ['-e', 'process.exit(7)'], {
   timeoutMs: 2_000, maxOutputBytes: 128,

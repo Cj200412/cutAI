@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import { ResultDownloadError } from './result-download.ts';
 
-export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface GenerationResult {
   assetId: string;
@@ -41,6 +41,7 @@ interface GenerationJob {
   cleanupResult?: (result: GenerationResult) => Promise<void> | void;
   retentionMs: number;
   expiryTimer?: NodeJS.Timeout;
+  abortController: AbortController;
 }
 
 export interface GenerationJobSnapshot {
@@ -86,7 +87,9 @@ export interface GenerationJobOptions {
 }
 
 const jobs = new Map<string, GenerationJob>();
-const TERMINAL = new Set<GenerationJobStatus>(['succeeded', 'failed']);
+const TERMINAL = new Set<GenerationJobStatus>(['succeeded', 'failed', 'cancelled']);
+const MAX_NONTERMINAL_JOBS = 32;
+const MAX_RETAINED_JOBS = 128;
 const MAX_JOB_AGE_MS = 60 * 60_000;
 
 function cleanOldJobs() {
@@ -98,6 +101,42 @@ function cleanOldJobs() {
 
 function normalizeRetentionMs(value: number | undefined): number {
   return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : MAX_JOB_AGE_MS;
+}
+
+function abortError(): DOMException {
+  return new DOMException('Job cancelled', 'AbortError');
+}
+
+async function acquireJobPermit(
+  acquire: GenerationJobOptions['acquire'],
+  signal: AbortSignal,
+): Promise<(() => void) | undefined> {
+  if (!acquire) return undefined;
+  if (signal.aborted) throw abortError();
+  return new Promise((resolvePermit, rejectPermit) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      rejectPermit(abortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void acquire().then((release) => {
+      signal.removeEventListener('abort', onAbort);
+      if (settled || signal.aborted) {
+        release();
+        if (!settled) rejectPermit(abortError());
+        return;
+      }
+      settled = true;
+      resolvePermit(release);
+    }, (error) => {
+      signal.removeEventListener('abort', onAbort);
+      if (settled) return;
+      settled = true;
+      rejectPermit(error);
+    });
+  });
 }
 
 function scheduleExpiry(job: GenerationJob): void {
@@ -151,6 +190,19 @@ function completeGenerationJob(job: GenerationJob, returned: GenerationResult | 
   if (job.totalFrames !== undefined) job.processedFrames = job.totalFrames;
 }
 
+async function cleanupReturnedResults(
+  job: GenerationJob,
+  returned: GenerationResult | GenerationResult[],
+): Promise<void> {
+  if (!job.cleanupResult) return;
+  const results = Array.isArray(returned) ? returned : [returned];
+  try {
+    await Promise.all(results.map((generated) => job.cleanupResult!(generated)));
+  } catch (error) {
+    console.warn(`[generation-job] failed to clean cancelled result for ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function failGenerationJob(job: GenerationJob, error: unknown): void {
   job.status = 'failed';
   job.error = error instanceof Error ? error.message : String(error);
@@ -165,12 +217,14 @@ async function runGenerationJob(
     jobId: string,
     update: UpdateGenerationJob,
     registerDownload: RegisterGenerationDownload,
+    signal: AbortSignal,
   ) => Promise<GenerationResult | GenerationResult[]>,
   options: GenerationJobOptions,
 ): Promise<void> {
   let release: (() => void) | undefined;
   try {
-    release = await options.acquire?.();
+    release = await acquireJobPermit(options.acquire, job.abortController.signal);
+    if (job.abortController.signal.aborted) throw abortError();
     job.status = 'running';
     job.progress = 10;
     job.phase = 'starting';
@@ -178,10 +232,20 @@ async function runGenerationJob(
     const returned = await task(job.id, (next) => applyProgress(job, next), (url, resume) => {
       job.resumeDownloadUrl = url;
       job.resumeDownload = resume;
-    });
+    }, job.abortController.signal);
+    if (job.abortController.signal.aborted) {
+      await cleanupReturnedResults(job, returned);
+      throw abortError();
+    }
     completeGenerationJob(job, returned);
   } catch (error) {
-    failGenerationJob(job, error);
+    if (job.abortController.signal.aborted
+      || (error instanceof DOMException && error.name === 'AbortError')) {
+      job.status = 'cancelled';
+      job.error = 'Job cancelled';
+      job.progress = 100;
+      job.phase = 'cancelled';
+    } else failGenerationJob(job, error);
   } finally {
     job.updatedAt = Date.now();
     release?.();
@@ -195,10 +259,19 @@ export function createGenerationJob(
     jobId: string,
     update: UpdateGenerationJob,
     registerDownload: RegisterGenerationDownload,
+    signal: AbortSignal,
   ) => Promise<GenerationResult | GenerationResult[]>,
   options: GenerationJobOptions = {},
 ): { jobId: string; status: 'queued' } {
   cleanOldJobs();
+  const nonterminalJobs = [...jobs.values()].filter((job) => !TERMINAL.has(job.status)).length;
+  if (nonterminalJobs >= MAX_NONTERMINAL_JOBS) {
+    throw new Error(`generation job limit reached (${MAX_NONTERMINAL_JOBS} queued or running jobs)`);
+  }
+  trimRetainedJobs();
+  if (jobs.size >= MAX_RETAINED_JOBS) {
+    throw new Error(`generation job retention limit reached (${MAX_RETAINED_JOBS} jobs)`);
+  }
   const id = randomUUID();
   const now = Date.now();
   const job: GenerationJob = {
@@ -211,6 +284,7 @@ export function createGenerationJob(
     updatedAt: now,
     cleanupResult: options.cleanupResult,
     retentionMs: normalizeRetentionMs(options.retentionMs),
+    abortController: new AbortController(),
   };
   jobs.set(id, job);
   void runGenerationJob(job, task, options);
@@ -261,6 +335,25 @@ export function getGenerationJobSnapshot(jobId: string): GenerationJobSnapshot |
 /** Remove a finished job after a one-shot consumer has downloaded its result. */
 export function deleteGenerationJob(jobId: string): Promise<boolean> {
   return evictTerminalJob(jobId);
+}
+
+/** Request cancellation for queued/running local work. Terminal jobs are left for normal cleanup. */
+export function cancelGenerationJob(jobId: string): boolean {
+  const job = jobs.get(jobId);
+  if (!job || TERMINAL.has(job.status)) return false;
+  job.abortController.abort();
+  job.updatedAt = Date.now();
+  return true;
+}
+
+function trimRetainedJobs(): void {
+  if (jobs.size < MAX_RETAINED_JOBS) return;
+  const oldestTerminalJobs = [...jobs.values()]
+    .filter((job) => TERMINAL.has(job.status))
+    .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt);
+  while (jobs.size >= MAX_RETAINED_JOBS && oldestTerminalJobs.length) {
+    void evictTerminalJob(oldestTerminalJobs.shift()!.id);
+  }
 }
 
 interface ProgressRequest {

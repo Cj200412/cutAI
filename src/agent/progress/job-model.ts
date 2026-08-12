@@ -43,6 +43,8 @@ const WIRE_TO_CANONICAL: Readonly<Record<string, JobStatus>> = {
   done: 'complete',
   failed: 'failed',
   error: 'failed',
+  cancelled: 'failed',
+  canceled: 'failed',
   not_found: 'not_found',
   missing: 'not_found',
 };

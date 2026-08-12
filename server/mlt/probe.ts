@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 export const MLT_PROBE_VERSION = 1 as const;
-export const MLT_QUERY_NAMES = ['consumers', 'producers', 'filters', 'transitions', 'video_codecs'] as const;
+export const MLT_QUERY_NAMES = [
+  'consumers', 'producers', 'filters', 'transitions', 'video_codecs', 'audio_codecs', 'formats',
+] as const;
 export type MltQueryName = (typeof MLT_QUERY_NAMES)[number];
-export type MltCommandStatus = 'ok' | 'failed' | 'timeout' | 'output-limit' | 'skipped';
+export type MltCommandStatus = 'ok' | 'failed' | 'timeout' | 'output-limit' | 'aborted' | 'skipped';
 export type MltProbeAvailability = 'not-found' | 'unusable' | 'inspectable';
 
 export interface BoundedProcessResult {
@@ -17,7 +19,7 @@ export interface BoundedProcessResult {
   stderr: string;
   durationMs: number;
   truncated: boolean;
-  terminationReason?: 'timeout' | 'output-limit' | 'spawn-error';
+  terminationReason?: 'timeout' | 'output-limit' | 'aborted' | 'spawn-error';
   errorMessage?: string;
 }
 
@@ -27,6 +29,8 @@ export interface BoundedProcessOptions {
   killGraceMs?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  signal?: AbortSignal;
 }
 
 export interface MltQueryReport {
@@ -65,7 +69,8 @@ export interface MltProbeReport {
   hardwareCodecStatus: 'reported-unverified';
   renderVerified: false;
   operationallyRendered: false;
-  selectableForExport: false;
+  selectableForExport: boolean;
+  exportCompatibilityFailure?: string;
   diagnostics: MltProbeDiagnostic[];
 }
 
@@ -87,6 +92,7 @@ export interface ProbeMltOptions {
   runner?: MltProbeRunner;
   timeoutMs?: number;
   maxOutputBytes?: number;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -163,6 +169,8 @@ function emptyQueries(): Record<MltQueryName, MltQueryReport> {
     filters: { status: 'skipped', items: [], truncated: false },
     transitions: { status: 'skipped', items: [], truncated: false },
     video_codecs: { status: 'skipped', items: [], truncated: false },
+    audio_codecs: { status: 'skipped', items: [], truncated: false },
+    formats: { status: 'skipped', items: [], truncated: false },
   };
 }
 
@@ -191,6 +199,44 @@ function baseReport(
     selectableForExport: false,
     diagnostics,
   };
+}
+
+/**
+ * Return the first unmet requirement for the experimental CPU export path.
+ * This deliberately does not treat probing as a successful render: the two
+ * render verification flags remain false until a separate real render proves
+ * otherwise.
+ */
+export function mltExperimentalCpuExportCompatibilityFailure(
+  report: MltProbeReport,
+): string | undefined {
+  if (report.availability !== 'inspectable' || report.versionStatus !== 'ok' || !report.executable.resolvedPath) {
+    return report.diagnostics[0]?.message ?? 'melt is unavailable or did not pass its version probe';
+  }
+  if (report.queries.producers.status !== 'ok'
+    || !report.queries.producers.items.includes('avformat')
+    || !report.queries.producers.items.includes('xml')
+    || !report.queries.producers.items.includes('color')) {
+    return 'melt must report avformat, xml, and color producers';
+  }
+  if (report.queries.consumers.status !== 'ok' || !report.queries.consumers.items.includes('avformat')) {
+    return 'melt must report the avformat consumer';
+  }
+  if (report.queries.transitions.status !== 'ok'
+    || !report.queries.transitions.items.includes('qtblend')
+    || !report.queries.transitions.items.includes('mix')) {
+    return 'melt must report the qtblend and mix transitions';
+  }
+  if (report.queries.video_codecs.status !== 'ok' || !report.queries.video_codecs.items.includes('libx264')) {
+    return 'melt avformat must report the CPU libx264 encoder';
+  }
+  if (report.queries.audio_codecs?.status !== 'ok' || !report.queries.audio_codecs.items.includes('aac')) {
+    return 'melt avformat must report the AAC audio encoder';
+  }
+  if (report.queries.formats?.status !== 'ok' || !report.queries.formats.items.includes('mp4')) {
+    return 'melt avformat must report the MP4 muxer';
+  }
+  return undefined;
 }
 
 async function usableExecutable(path: string, platform: NodeJS.Platform): Promise<string | null> {
@@ -261,7 +307,15 @@ export function runBoundedProcess(
   const maxOutputBytes = Math.max(1, options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES);
   const killGraceMs = Math.max(1, options.killGraceMs ?? 1_000);
   const startedAt = Date.now();
+  const platform = options.platform ?? process.platform;
   return new Promise((resolvePromise) => {
+    if (options.signal?.aborted) {
+      resolvePromise({
+        exitCode: null, signal: null, stdout: '', stderr: '', durationMs: 0,
+        truncated: false, terminationReason: 'aborted', errorMessage: 'probe cancelled',
+      });
+      return;
+    }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(executable, [...args], {
@@ -270,6 +324,7 @@ export function runBoundedProcess(
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: options.cwd ?? tmpdir(),
         env: options.env ?? mltProbeEnvironment(),
+        detached: platform !== 'win32',
       });
     } catch (error) {
       resolvePromise({
@@ -293,6 +348,7 @@ export function runBoundedProcess(
       settled = true;
       if (timeout) clearTimeout(timeout);
       if (killGrace) clearTimeout(killGrace);
+      options.signal?.removeEventListener('abort', abortHandler);
       resolvePromise({
         exitCode,
         signal,
@@ -305,13 +361,28 @@ export function runBoundedProcess(
       });
     };
 
+    const killTree = () => {
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+      if (platform === 'win32') {
+        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+          shell: false, windowsHide: true, stdio: 'ignore',
+        });
+        killer.unref();
+        return;
+      }
+      try { process.kill(-child.pid, 'SIGKILL'); } catch {
+        try { child.kill('SIGKILL'); } catch { /* already closed */ }
+      }
+    };
+
     const terminate = (reason: NonNullable<BoundedProcessResult['terminationReason']>, message?: string) => {
       if (terminationReason || settled) return;
       terminationReason = reason;
       if (message) errorMessage = boundedMessage(message);
-      try { child.kill('SIGKILL'); } catch { /* close/grace settles below */ }
+      killTree();
       killGrace = setTimeout(() => finish(null, null), killGraceMs);
     };
+    const abortHandler = () => terminate('aborted', 'probe cancelled');
 
     const collect = (chunk: Buffer | string, target: Buffer[]) => {
       if (settled) return;
@@ -326,6 +397,8 @@ export function runBoundedProcess(
     };
 
     timeout = setTimeout(() => terminate('timeout', `probe timed out after ${timeoutMs} ms`), timeoutMs);
+    options.signal?.addEventListener('abort', abortHandler, { once: true });
+    if (options.signal?.aborted) abortHandler();
     child.stdout?.on('data', (chunk) => collect(chunk as Buffer, stdout));
     child.stderr?.on('data', (chunk) => collect(chunk as Buffer, stderr));
     child.once('error', (error) => terminate('spawn-error', error instanceof Error ? error.message : String(error)));
@@ -347,6 +420,7 @@ export function parseMltList(raw: string): string[] {
 }
 
 function commandStatus(result: BoundedProcessResult): MltCommandStatus {
+  if (result.terminationReason === 'aborted') return 'aborted';
   if (result.terminationReason === 'timeout') return 'timeout';
   if (result.terminationReason === 'output-limit') return 'output-limit';
   return result.exitCode === 0 && !result.terminationReason ? 'ok' : 'failed';
@@ -404,6 +478,8 @@ export async function probeMlt(options: ProbeMltOptions = {}): Promise<MltProbeR
     maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     cwd: tmpdir(),
     env: mltProbeEnvironment(environment),
+    platform,
+    signal: options.signal,
   };
   const report = baseReport('unusable', {
     source: resolution.source,
@@ -449,6 +525,9 @@ export async function probeMlt(options: ProbeMltOptions = {}): Promise<MltProbeR
     xmlConsumerReported: report.queries.consumers.items.includes('xml'),
   };
   report.hardwareCodecCandidates = report.queries.video_codecs.items.filter((codec) => HARDWARE_CODECS.has(codec));
+  const exportCompatibilityFailure = mltExperimentalCpuExportCompatibilityFailure(report);
+  report.selectableForExport = exportCompatibilityFailure === undefined;
+  if (exportCompatibilityFailure) report.exportCompatibilityFailure = exportCompatibilityFailure;
   return report;
 }
 

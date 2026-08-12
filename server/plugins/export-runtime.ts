@@ -31,13 +31,21 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function isTemporaryExportFilename(filename: string): boolean {
-  if (!filename.startsWith(EXPORT_JOB_FILE_PREFIX)) return false;
+  const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+  const finalExport = new RegExp(`^${EXPORT_JOB_FILE_PREFIX}${uuid}\\.(?:mp4|webm|mp3|wav)$`, 'i').test(filename);
+  const mltPartial = new RegExp(
+    `^\\.${EXPORT_JOB_FILE_PREFIX}${uuid}\\.(?:mp4|webm|mp3|wav)\\.partial-${uuid}\\.mp4$`,
+    'i',
+  ).test(filename);
+  if (!finalExport && !mltPartial) return false;
+  if (mltPartial) return true;
   const extension = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase();
   return EXPORT_JOB_EXTENSIONS.has(extension);
 }
 
 export function exportJobFilename(id: string, extension: string): string {
-  if (!/^[a-zA-Z0-9-]+$/.test(id) || !EXPORT_JOB_EXTENSIONS.has(extension)) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    || !EXPORT_JOB_EXTENSIONS.has(extension)) {
     throw new Error('invalid export job filename');
   }
   return `${EXPORT_JOB_FILE_PREFIX}${id}.${extension}`;

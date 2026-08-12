@@ -99,11 +99,23 @@ function convertKeyframes(item: TimelineItem): NeutralClipV1['keyframes'] | unde
   return Object.keys(converted).length ? converted : undefined;
 }
 
-function convertedSource(item: TimelineItem, fps: number): NeutralClipV1['source'] | undefined {
+function visualSourceDimensions(item: TimelineItem, state: TimelineState): { width: number; height: number } | undefined {
+  if (item.kind !== 'video' && item.kind !== 'image') return undefined;
+  const asset = state.assets?.find((candidate) => candidate.src === item.src);
+  const width = asset?.width ?? item.width;
+  const height = asset?.height ?? item.height;
+  return Number.isInteger(width) && Number(width) > 0 && Number.isInteger(height) && Number(height) > 0
+    ? { width: Number(width), height: Number(height) }
+    : undefined;
+}
+
+function convertedSource(item: TimelineItem, fps: number, state: TimelineState): NeutralClipV1['source'] | undefined {
   if (!item.src) return undefined;
+  const dimensions = visualSourceDimensions(item, state);
   const source = {
     uri: item.kind === 'audio' ? item.denoisedSrc || item.src : item.src,
     ...(item.kind === 'video' && item.denoisedSrc ? { alternateAudioUri: item.denoisedSrc } : {}),
+    ...(dimensions ?? {}),
     sourceInFrame: item.srcInFrame ?? 0,
     playbackRate: item.playbackRate ?? 1,
   } satisfies NonNullable<NeutralClipV1['source']>;
@@ -125,9 +137,10 @@ function convertedSource(item: TimelineItem, fps: number): NeutralClipV1['source
 function convertClip(
   item: TimelineItem,
   fps: number,
+  state: TimelineState,
   diagnostics: NeutralDiagnosticV1[],
 ): NeutralClipV1 {
-  const source = convertedSource(item, fps);
+  const source = convertedSource(item, fps, state);
   let placeholder: NeutralClipV1['placeholder'];
   if (!source) {
     if (item.kind === 'motion-graphic' || item.kind === 'text' || item.kind === 'solid') {
@@ -303,7 +316,91 @@ function convertTransition(
   };
 }
 
-export function toNeutralTimeline(state: TimelineState): NeutralTimelineV1 {
+export interface NeutralTimelineExportOptions {
+  /** Half-open source range. The returned timeline is rebased to frame zero. */
+  frameRange?: readonly [number, number];
+}
+
+function rangedTimeline(timeline: NeutralTimelineV1, frameRange: readonly [number, number]): NeutralTimelineV1 {
+  const [startFrame, endFrameExclusive] = frameRange;
+  if (!Number.isInteger(startFrame) || !Number.isInteger(endFrameExclusive)
+    || startFrame < 0 || endFrameExclusive <= startFrame || endFrameExclusive > timeline.durationFrames) {
+    throw new Error('neutral timeline frameRange must be a valid half-open interval');
+  }
+  if (startFrame === 0 && endFrameExclusive === timeline.durationFrames) return timeline;
+  const tracks = timeline.tracks.map((track) => ({
+    ...track,
+    clips: track.clips.flatMap((clip) => {
+      const clipEnd = clip.startFrame + clip.durationFrames;
+      const keptStart = Math.max(startFrame, clip.startFrame);
+      const keptEnd = Math.min(endFrameExclusive, clipEnd);
+      if (keptEnd <= keptStart) return [];
+      const trimFrames = keptStart - clip.startFrame;
+      const keptDuration = keptEnd - keptStart;
+      const source = clip.source ? {
+        ...clip.source,
+        sourceInFrame: clip.source.sourceInFrame + Math.round(trimFrames * clip.source.playbackRate),
+        ...(clip.source.segments ? {
+          segments: clip.source.segments.flatMap((segment) => {
+            const segmentStart = segment.timelineOffsetFrames;
+            const segmentEnd = segmentStart + segment.durationFrames;
+            const intersectionStart = Math.max(trimFrames, segmentStart);
+            const intersectionEnd = Math.min(trimFrames + keptDuration, segmentEnd);
+            return intersectionEnd > intersectionStart ? [{
+              timelineOffsetFrames: intersectionStart - trimFrames,
+              sourceInFrame: segment.sourceInFrame + intersectionStart - segmentStart,
+              durationFrames: intersectionEnd - intersectionStart,
+            }] : [];
+          }),
+        } : {}),
+      } : undefined;
+      const keyframes = clip.keyframes ? Object.fromEntries(
+        Object.entries(clip.keyframes).flatMap(([name, rows]) => {
+          const kept = rows?.filter((row) => row.frame >= trimFrames && row.frame < trimFrames + keptDuration)
+            .map((row) => ({ ...row, frame: row.frame - trimFrames }));
+          return kept?.length ? [[name, kept]] : [];
+        }),
+      ) : undefined;
+      return [{
+        ...clip,
+        startFrame: keptStart - startFrame,
+        durationFrames: keptDuration,
+        ...(source ? { source } : {}),
+        ...(keyframes && Object.keys(keyframes).length ? { keyframes } : { keyframes: undefined }),
+      }];
+    }),
+    ...(track.captions ? {
+      captions: {
+        ...track.captions,
+        cues: track.captions.cues.flatMap((cue) => {
+          const keptStart = Math.max(startFrame, cue.startFrame);
+          const keptEnd = Math.min(endFrameExclusive, cue.endFrameExclusive);
+          return keptEnd > keptStart ? [{
+            ...cue,
+            startFrame: keptStart - startFrame,
+            endFrameExclusive: keptEnd - startFrame,
+          }] : [];
+        }),
+      },
+    } : {}),
+  }));
+  const keptClipIds = new Set(tracks.flatMap((track) => track.clips.map((clip) => clip.id)));
+  const ranged: NeutralTimelineV1 = {
+    ...timeline,
+    durationFrames: endFrameExclusive - startFrame,
+    tracks,
+    transitions: timeline.transitions.filter((transition) => (
+      keptClipIds.has(transition.outgoingClipId) && keptClipIds.has(transition.incomingClipId)
+    )),
+  };
+  assertNeutralTimelineV1(ranged);
+  return ranged;
+}
+
+export function toNeutralTimeline(
+  state: TimelineState,
+  options: NeutralTimelineExportOptions = {},
+): NeutralTimelineV1 {
   validateEditorTimeline(state);
   const diagnostics: NeutralDiagnosticV1[] = [];
   const lastItemFrame = state.items.reduce(
@@ -319,7 +416,7 @@ export function toNeutralTimeline(state: TimelineState): NeutralTimelineV1 {
     const clips = state.items
       .filter((item) => item.track === trackId)
       .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
-      .map((item) => convertClip(item, state.fps, diagnostics));
+      .map((item) => convertClip(item, state.fps, state, diagnostics));
     if (kind === 'caption' && clips.length) diagnostics.push({
       code: 'clip-on-caption-track', severity: 'error', message: `caption track ${trackId} contains media clips`, trackId,
     });
@@ -355,5 +452,5 @@ export function toNeutralTimeline(state: TimelineState): NeutralTimelineV1 {
     diagnostics,
   };
   assertNeutralTimelineV1(timeline);
-  return timeline;
+  return options.frameRange ? rangedTimeline(timeline, options.frameRange) : timeline;
 }

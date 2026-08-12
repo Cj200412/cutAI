@@ -1,12 +1,15 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readFile, unlink, mkdir, rename, stat } from 'node:fs/promises';
 import { normalizeFrameRange } from '../../src/export/range.ts';
 import { resolveH264Encoder, resolveH264TargetBitrate, type H264Encoder } from '../media-acceleration.ts';
 import { ffmpegBin } from '../media-binaries.ts';
+import { resolveMltTimelineResources } from '../mlt/media-resolver.ts';
+import { MAX_MLT_CPU_THREADS, renderMltTimeline } from '../mlt/render.ts';
+import { localCpuThreadLimit } from '../performance-budget.ts';
 import {
   EXPORT_MEDIA,
   exportDuration,
@@ -30,6 +33,7 @@ import {
 } from './export-runtime.ts';
 import {
   createGenerationJob,
+  cancelGenerationJob,
   deleteGenerationJob,
   getGenerationJobSnapshot,
   type UpdateGenerationJob,
@@ -98,11 +102,43 @@ async function renderExportPlan(
   plan: ExportPlan,
   filepath: string,
   update: UpdateGenerationJob,
+  signal?: AbortSignal,
 ): Promise<void> {
   const retimed = plan.retimeFps ? `${filepath}.retimed.${plan.media.ext}` : null;
   try {
     update({ phase: 'preparing', progress: 4, processedFrames: 0, totalFrames: plan.totalFrames });
     await mkdir(dirname(filepath), { recursive: true });
+    if (plan.backend === 'mlt-experimental') {
+      const timeline = plan.neutralTimeline;
+      if (!timeline) throw new Error('MLT export plan is missing its validated neutralTimeline');
+      const resources = await resolveMltTimelineResources(timeline, { signal });
+      update({ phase: 'rendering', progress: 8 });
+      const result = await renderMltTimeline({
+        timeline,
+        resources,
+        output: {
+          rootDirectory: dirname(filepath),
+          relativePath: basename(filepath),
+        },
+        settings: { cpuThreads: Math.min(MAX_MLT_CPU_THREADS, localCpuThreadLimit()) },
+        signal,
+        onProgress: (value) => {
+          const normalized = Math.min(1, Math.max(0, Number(value) || 0));
+          update({
+            phase: 'rendering',
+            progress: 8 + normalized * 90,
+            processedFrames: Math.min(plan.totalFrames, Math.floor(normalized * plan.totalFrames)),
+            totalFrames: plan.totalFrames,
+          });
+        },
+      });
+      if (result.status !== 'completed') {
+        const detail = result.diagnostics.map((diagnostic) => diagnostic.message).filter(Boolean).join('; ');
+        throw new Error(`MLT export ${result.status}: ${detail || 'melt did not produce an output file'}`);
+      }
+      update({ phase: 'finalizing', progress: 99, processedFrames: plan.totalFrames });
+      return;
+    }
     update({ phase: 'rendering', progress: 8 });
     const renderSpan = plan.retimeFps ? 84 : 90;
     await renderTimeline({
@@ -296,8 +332,15 @@ export function exportPlugin(): Plugin {
           if (!id) { sendError(res, 400, 'render id is required'); return; }
           const snapshot = getGenerationJobSnapshot(id);
           if (!snapshot) { sendError(res, 404, `render job ${id} not found`); return; }
-          if (snapshot.status === 'queued' || snapshot.status === 'running') {
-            sendError(res, 409, 'render job is still running'); return;
+          const isMltJob = snapshot.params.backend === 'mlt-experimental';
+          if (snapshot.status === 'queued' || (snapshot.status === 'running' && isMltJob)) {
+            if (!cancelGenerationJob(id)) { sendError(res, 409, 'render job cannot be cancelled'); return; }
+            sendJson(res, 202, { renderId: id, status: 'cancelling' });
+            return;
+          }
+          if (snapshot.status === 'running') {
+            sendError(res, 409, 'this renderer cannot be interrupted safely');
+            return;
           }
           await deleteGenerationJob(id);
           res.statusCode = 204;
@@ -325,15 +368,16 @@ export function exportPlugin(): Plugin {
           const { jobId } = createGenerationJob(
             {
               kind: 'export',
+              backend: plan.backend,
               format: plan.format,
               codec: plan.media.codec,
               name: plan.filename,
               frameRange: plan.frameRange ?? null,
               totalFrames: plan.totalFrames,
             },
-            async (_jobId, update) => {
+            async (_jobId, update, _registerDownload, signal) => {
               try {
-                await renderExportPlan(plan, filepath, update);
+                await renderExportPlan(plan, filepath, update, signal);
                 const { size } = await stat(filepath);
                 const sourceFps = Number((plan.state as { fps?: unknown }).fps);
                 const outputSize = plan.format === 'video' ? exportOutputSize(plan.state, plan.scale) : undefined;

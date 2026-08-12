@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { TaskLimiter } from '../task-limiter.ts';
 import {
-  createGenerationJob, deleteGenerationJob, getGenerationJobSnapshot, resumeGenerationJobDownload,
+  cancelGenerationJob, createGenerationJob, deleteGenerationJob, getGenerationJobSnapshot, resumeGenerationJobDownload,
 } from './generation-jobs.ts';
 import { pickMurekaAudioUrl } from './music.ts';
 import { ResultDownloadError } from './result-download.ts';
@@ -72,6 +72,41 @@ assert.equal(getGenerationJobSnapshot(failure.jobId)?.status, 'failed');
 assert.equal(getGenerationJobSnapshot(failure.jobId)?.phase, 'failed');
 assert.equal(getGenerationJobSnapshot(failure.jobId)?.error, 'expected failure');
 
+let cancelledSignal: AbortSignal | undefined;
+const cancellable = createGenerationJob({ kind: 'export' }, async (_id, _update, _download, signal) => {
+  cancelledSignal = signal;
+  await new Promise<void>((resolvePromise) => signal.addEventListener('abort', () => resolvePromise(), { once: true }));
+  throw new DOMException('cancelled', 'AbortError');
+});
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+assert.equal(cancelGenerationJob(cancellable.jobId), true);
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+assert.equal(cancelledSignal?.aborted, true);
+assert.equal(getGenerationJobSnapshot(cancellable.jobId)?.status, 'cancelled');
+assert.equal(getGenerationJobSnapshot(cancellable.jobId)?.phase, 'cancelled');
+assert.equal(cancelGenerationJob(cancellable.jobId), false, 'terminal cancellation is idempotent');
+
+let releaseLateResult: (() => void) | undefined;
+const lateResultGate = new Promise<void>((resolve) => { releaseLateResult = resolve; });
+const lateCleanup: string[] = [];
+const cancelledAfterReturn = createGenerationJob({ kind: 'export' }, async (id) => {
+  await lateResultGate;
+  return cleanupResult(id);
+}, {
+  cleanupResult: async (generated) => { lateCleanup.push(generated.path); },
+});
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+assert.equal(cancelGenerationJob(cancelledAfterReturn.jobId), true);
+releaseLateResult?.();
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+assert.equal(getGenerationJobSnapshot(cancelledAfterReturn.jobId)?.status, 'cancelled');
+assert.deepEqual(
+  lateCleanup,
+  [`/media/uploads/${cancelledAfterReturn.jobId}.mp4`],
+  'a result returned after cancellation must be disposed immediately instead of leaking until the stale sweep',
+);
+
 let downloadAttempts = 0;
 const resumable = createGenerationJob({ kind: 'video' }, async (id, _update, registerDownload) => {
   const download = async () => {
@@ -108,18 +143,32 @@ const second = createGenerationJob({ kind: 'export' }, async (id) => result(id),
 await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
 assert.equal(getGenerationJobSnapshot(first.jobId)?.status, 'running');
 assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'queued');
+assert.equal(cancelGenerationJob(second.jobId), true, 'queued jobs must be cancellable before their permit arrives');
 assert.deepEqual(limiter.snapshot(), { active: 1, queued: 1, limit: 1 });
 const realNow = Date.now;
 Date.now = () => realNow() + 2 * 60 * 60_000;
 createGenerationJob({ kind: 'cleanup-trigger' }, async (id) => result(id));
 Date.now = realNow;
-assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'queued', 'age cleanup must retain queued jobs');
+assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'queued', 'cancelled queued job remains queued until permit wait unwinds');
 finishFirst?.();
 await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
 await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
 assert.equal(getGenerationJobSnapshot(first.jobId)?.status, 'succeeded');
-assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'succeeded');
+assert.equal(getGenerationJobSnapshot(second.jobId)?.status, 'cancelled');
 assert.deepEqual(limiter.snapshot(), { active: 0, queued: 0, limit: 1 });
+
+const retainedCleanup: string[] = [];
+const retainedIds: string[] = [];
+for (let index = 0; index < 130; index += 1) {
+  const retained = createGenerationJob({ kind: 'retention-check', index }, async (id) => result(id), {
+    cleanupResult: async (generated) => { retainedCleanup.push(generated.path); },
+  });
+  retainedIds.push(retained.jobId);
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+}
+assert.equal(getGenerationJobSnapshot(retainedIds[0]!), undefined, 'the oldest terminal job must be evicted at the total retention cap');
+assert.equal(getGenerationJobSnapshot(retainedIds.at(-1)!)?.status, 'succeeded');
+assert.ok(retainedCleanup.length > 0, 'retention eviction must dispose generated artifacts');
 
 assert.equal(pickMurekaAudioUrl({ choices: [{ audio_url: 'audio' }] }), 'audio');
 assert.equal(pickMurekaAudioUrl({ choices: [{ url: 'url' }] }), 'url');
